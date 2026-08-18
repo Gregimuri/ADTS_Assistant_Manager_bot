@@ -27,6 +27,7 @@ class Player:
     emm: str
     reflash: str
     cube: str
+    do_nothing: str
 
 
 class SheetsError(RuntimeError):
@@ -117,6 +118,7 @@ def _parse_csv(text: str) -> list[Player]:
                 emm=_cell(row, field_map.get("emm")),
                 reflash=_cell(row, field_map.get("reflash")),
                 cube=_cell(row, field_map.get("cube")),
+                do_nothing=_cell(row, field_map.get("do_nothing")),
             )
         )
     return players
@@ -130,6 +132,7 @@ def _map_fields(fieldnames: list[str]) -> dict[str, str]:
         "emm": ("емм", "emm"),
         "reflash": ("перепрошить", "reflash"),
         "cube": ("обновить кубик", "кубик"),
+        "do_nothing": ("ничего не делать",),
     }
     normalized = {name: _normalize_header(name) for name in fieldnames}
     mapping: dict[str, str] = {}

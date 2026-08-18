@@ -40,9 +40,9 @@ class Catalog:
                     object_number=object_number,
                     address=group[0].address,
                     players=tuple(group),
-                    emm_count=sum(1 for player in group if _is_emm_device(player.emm)),
-                    flash_count=sum(1 for player in group if _is_reflash(player.reflash)),
-                    cube_count=sum(1 for player in group if _is_on_site_cube(player.cube)),
+                    emm_count=sum(1 for player in group if _is_emm_device(player)),
+                    flash_count=sum(1 for player in group if _is_reflash(player)),
+                    cube_count=sum(1 for player in group if _is_on_site_cube(player)),
                 )
             )
         return result
@@ -57,14 +57,24 @@ def _normalize(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
-def _is_emm_device(status: str) -> bool:
-    normalized = _normalize(status)
+def _is_skip_work(player: Player) -> bool:
+    return _normalize(player.do_nothing) == "ничего не делать"
+
+
+def _is_emm_device(player: Player) -> bool:
+    if _is_skip_work(player):
+        return False
+    normalized = _normalize(player.emm)
     return bool(normalized) and normalized != "не ставить"
 
 
-def _is_reflash(status: str) -> bool:
-    return _normalize(status) == "прошить"
+def _is_reflash(player: Player) -> bool:
+    if _is_skip_work(player):
+        return False
+    return _normalize(player.reflash) == "прошить"
 
 
-def _is_on_site_cube(status: str) -> bool:
-    return _normalize(status) == "обновить"
+def _is_on_site_cube(player: Player) -> bool:
+    if _is_skip_work(player):
+        return False
+    return _normalize(player.cube) == "обновить"
