@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import sys
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.handlers import emm_invoice_router, start_router
 from app.services.catalog import Catalog
 from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
 
+WEBHOOK_PATH = "/webhook"
 
-async def run() -> None:
+
+def _configure_logging() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     logging.basicConfig(
@@ -22,17 +27,84 @@ async def run() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stdout,
     )
-    settings = get_settings()
-    sheets = SheetsClient(settings)
-    catalog = Catalog(sheets)
 
-    bot = Bot(token=settings.bot_token)
+
+def _webhook_secret(bot_token: str) -> str:
+    return hashlib.sha256(bot_token.encode()).hexdigest()
+
+
+def _build_dispatcher(catalog: Catalog, settings: Settings) -> Dispatcher:
     dp = Dispatcher()
     dp.include_routers(start_router, emm_invoice_router)
     dp.workflow_data.update(catalog=catalog, settings=settings)
+    return dp
 
-    logger.info("Starting Assistant Manager bot")
-    await dp.start_polling(bot, drop_pending_updates=True)
+
+async def _health(_request: web.Request) -> web.Response:
+    return web.Response(text="ok")
+
+
+async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
+    app = web.Application()
+    app.router.add_get("/health", _health)
+    app.router.add_get("/", _health)
+
+    public_url = settings.public_base_url
+    if public_url:
+        secret = _webhook_secret(settings.bot_token)
+        webhook_url = f"{public_url}{WEBHOOK_PATH}"
+        SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(
+            app,
+            path=WEBHOOK_PATH,
+        )
+        setup_application(app, dp, bot=bot)
+
+        async def set_webhook(_app: web.Application) -> None:
+            await bot.set_webhook(
+                webhook_url,
+                secret_token=secret,
+                drop_pending_updates=True,
+            )
+            logger.info("Webhook set to %s", webhook_url)
+
+        app.on_startup.append(set_webhook)
+    else:
+        logger.warning("PORT is set, but public URL is missing; health checks only")
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", settings.port)
+    await site.start()
+    logger.info("HTTP server listening on 0.0.0.0:%s", settings.port)
+
+    try:
+        if public_url:
+            await asyncio.Event().wait()
+        else:
+            await dp.start_polling(bot, drop_pending_updates=True)
+    finally:
+        await runner.cleanup()
+        await bot.session.close()
+
+
+async def run() -> None:
+    _configure_logging()
+    settings = get_settings()
+    sheets = SheetsClient(settings)
+    catalog = Catalog(sheets)
+    bot = Bot(token=settings.bot_token)
+    dp = _build_dispatcher(catalog, settings)
+
+    if settings.port:
+        logger.info("Starting web mode for Render")
+        await _run_web(bot, dp, settings)
+        return
+
+    logger.info("Starting polling mode")
+    try:
+        await dp.start_polling(bot, drop_pending_updates=True)
+    finally:
+        await bot.session.close()
 
 
 def main() -> None:
