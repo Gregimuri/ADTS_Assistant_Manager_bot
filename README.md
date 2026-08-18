@@ -51,30 +51,37 @@ python -m app.main
 
 Файл `.env` с токеном в git не попадает — на GitHub только `.env.example`.
 
-## Render (работа 24/7)
+## Render (бесплатный Web Service)
 
-Бот слушает Telegram через long polling, без HTTP. На [Render](https://dashboard.render.com/) его нужно запускать как **Background Worker**, а не Web Service.
+На [Render](https://dashboard.render.com/) бот работает как **Web Service** (Free): поднимает HTTP на `$PORT`, отдаёт `/health` и принимает апдейты Telegram через webhook.
 
-- Worker не засыпает и не требует открытый порт.
-- У Worker нет бесплатного тарифа. Постоянная работа — план **Starter**, около [$7/мес](https://render.com/pricing).
-- Бесплатный Web Service засыпает через ~15 минут без запросов, поэтому для этого бота не подходит.
+Ограничения бесплатного тарифа ([документация Render](https://render.com/docs/free)):
 
-Пока бот крутится на Render, локальный `python -m app.main` нужно остановить: иначе Telegram вернёт ошибку `409 Conflict`.
+- сервис засыпает примерно через **15 минут без HTTP-запросов**;
+- первый запрос после сна будит его около минуты — первое сообщение в Telegram может прийти с задержкой;
+- на workspace даётся **750 бесплатных часов в месяц** (этого хватает на один сервис почти круглосуточно, если его не усыплять).
+
+Чтобы реже засыпал, повесьте бесплатный монитор (например [cron-job.org](https://cron-job.org/) или UptimeRobot) на `https://<имя>.onrender.com/health` каждые 10 минут.
+
+Если уже создан Background Worker — удалите или остановите его. Одновременно с Web Service он даст конфликт Telegram.
+
+Локальный `python -m app.main` на время работы Render тоже остановите.
 
 ### Как создать сервис в Dashboard
 
 1. Откройте [dashboard.render.com](https://dashboard.render.com/), войдите через GitHub.
-2. **New +** → **Background Worker**.
-3. Подключите репозиторий `Gregimuri/ADTS_Assistant_Manager_bot`, ветка `main`.
+2. **New +** → **Web Service**.
+3. Репозиторий `Gregimuri/ADTS_Assistant_Manager_bot`, ветка `main`.
 4. Заполните:
    - **Name:** `adts-assistant-manager-bot`
    - **Region:** Frankfurt
    - **Runtime:** Python
    - **Build Command:** `pip install -r requirements.txt`
    - **Start Command:** `python -m app.main`
-   - **Instance type:** Starter
-5. В **Environment Variables** добавьте `BOT_TOKEN` (тот же токен, что в локальном `.env`). Остальные переменные уже есть значения по умолчанию в коде, их можно не дублировать.
-6. Нажмите **Create Background Worker** и дождитесь статуса **Live**.
-7. В Telegram отправьте `/start` или `#СчетЕММ`.
+   - **Instance type:** Free
+5. В **Environment** добавьте `BOT_TOKEN`.
+6. **Create Web Service** и дождитесь **Live**.
+7. Откройте `https://<имя>.onrender.com/health` — должно быть `ok`.
+8. В Telegram: `/start` или `#СчетЕММ`.
 
-Либо **New +** → **Blueprint**, укажите тот же репозиторий: подхватится [`render.yaml`](render.yaml), а `BOT_TOKEN` Render спросит при создании.
+Либо **New +** → **Blueprint**: подхватится [`render.yaml`](render.yaml), Render спросит `BOT_TOKEN`.
