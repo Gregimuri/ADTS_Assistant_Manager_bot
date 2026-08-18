@@ -50,3 +50,31 @@ python -m app.main
 Репозиторий: https://github.com/Gregimuri/ADTS_Assistant_Manager_bot
 
 Файл `.env` с токеном в git не попадает — на GitHub только `.env.example`.
+
+## Render (работа 24/7)
+
+Бот слушает Telegram через long polling, без HTTP. На [Render](https://dashboard.render.com/) его нужно запускать как **Background Worker**, а не Web Service.
+
+- Worker не засыпает и не требует открытый порт.
+- У Worker нет бесплатного тарифа. Постоянная работа — план **Starter**, около [$7/мес](https://render.com/pricing).
+- Бесплатный Web Service засыпает через ~15 минут без запросов, поэтому для этого бота не подходит.
+
+Пока бот крутится на Render, локальный `python -m app.main` нужно остановить: иначе Telegram вернёт ошибку `409 Conflict`.
+
+### Как создать сервис в Dashboard
+
+1. Откройте [dashboard.render.com](https://dashboard.render.com/), войдите через GitHub.
+2. **New +** → **Background Worker**.
+3. Подключите репозиторий `Gregimuri/ADTS_Assistant_Manager_bot`, ветка `main`.
+4. Заполните:
+   - **Name:** `adts-assistant-manager-bot`
+   - **Region:** Frankfurt
+   - **Runtime:** Python
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `python -m app.main`
+   - **Instance type:** Starter
+5. В **Environment Variables** добавьте `BOT_TOKEN` (тот же токен, что в локальном `.env`). Остальные переменные уже есть значения по умолчанию в коде, их можно не дублировать.
+6. Нажмите **Create Background Worker** и дождитесь статуса **Live**.
+7. В Telegram отправьте `/start` или `#СчетЕММ`.
+
+Либо **New +** → **Blueprint**, укажите тот же репозиторий: подхватится [`render.yaml`](render.yaml), а `BOT_TOKEN` Render спросит при создании.
