@@ -32,7 +32,7 @@ async def run() -> None:
     dp.workflow_data.update(catalog=catalog, settings=settings)
 
     logger.info("Starting Assistant Manager bot")
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 
 def main() -> None:

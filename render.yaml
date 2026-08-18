@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: adts-assistant-manager-bot
+    runtime: python
+    plan: starter
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.main
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: SPREADSHEET_ID
+        value: 1sRy5VuFGEWsh_RZCGUkWKyKcLP8i6dO-F1smi4ok4Mk
+      - key: SPREADSHEET_GID
+        value: "0"
+      - key: SHEETS_CACHE_TTL_SECONDS
+        value: "600"
+      - key: PRICE_BASE
+        value: "1000"
+      - key: PRICE_PER_UNIT
+        value: "500"
