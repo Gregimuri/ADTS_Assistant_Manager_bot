@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 
 from app.config import Settings
@@ -56,20 +57,29 @@ def clean_address(address: str) -> str:
     return ", ".join(part for part in parts if part)
 
 
+def _escape(text: str) -> str:
+    return html.escape(text, quote=False)
+
+
+def _bold_italic(text: str) -> str:
+    return f"<b><i>{_escape(text)}</i></b>"
+
+
 def _format_store_block(match: StoreMatch, settings: Settings) -> str:
     address = clean_address(match.address)
-    header = f"{match.query}, {address}" if address else match.query
+    store_name = _escape(match.query)
+    header = f"<b>{store_name}</b>, {_escape(address)}" if address else f"<b>{store_name}</b>"
     work = _work_details(match.emm_count, match.flash_count, match.cube_count)
     price = settings.price_base + settings.price_per_unit * (
         match.emm_count + match.flash_count + match.cube_count
     )
     if work:
-        work_line = f"          — Выезд на ТО ({work}) - {price}"
+        work_line = f"          — Выезд на ТО ({_bold_italic(work)}) - {price}"
     else:
         work_line = "          — Работы по ЕММ не найдены"
     return (
         f"{header}\n"
-        "Ссылка на задачу - \n"
+        f"{_bold_italic('Ссылка на задачу -')} \n"
         "Фото акта приложено.\n"
         f"{work_line}"
     )
