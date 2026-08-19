@@ -2,7 +2,7 @@ import logging
 import re
 
 from aiogram import Bot, F, Router
-from aiogram.enums import ChatAction
+from aiogram.enums import ChatAction, ParseMode
 from aiogram.types import Message
 
 from app.config import Settings
@@ -50,4 +50,4 @@ async def handle_emm_invoice(
         return
 
     for chunk in join_invoice_blocks(blocks):
-        await message.answer(chunk)
+        await message.answer(chunk, parse_mode=ParseMode.HTML)
