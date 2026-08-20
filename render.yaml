@@ -20,3 +20,7 @@ services:
         value: "1000"
       - key: PRICE_PER_UNIT
         value: "500"
+      - key: TO_SHEET_NAME
+        value: ТО
+      - key: BITRIX_TASK_URL_TEMPLATE
+        value: "https://adts.bitrix24.ru/company/personal/user/189/tasks/task/view/{task_id}/"

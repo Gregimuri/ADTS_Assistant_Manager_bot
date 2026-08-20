@@ -15,9 +15,13 @@ class Settings(BaseSettings):
     bot_token: str
     spreadsheet_id: str = "1sRy5VuFGEWsh_RZCGUkWKyKcLP8i6dO-F1smi4ok4Mk"
     spreadsheet_gid: int = 0
+    to_sheet_name: str = "ТО"
     sheets_cache_ttl_seconds: int = 600
     price_base: int = 1000
     price_per_unit: int = 500
+    bitrix_task_url_template: str = (
+        "https://adts.bitrix24.ru/company/personal/user/189/tasks/task/view/{task_id}/"
+    )
     port: int | None = Field(default=None, validation_alias="PORT")
     webhook_base_url: str = Field(
         default="",
