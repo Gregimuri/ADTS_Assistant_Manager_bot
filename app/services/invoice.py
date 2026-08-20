@@ -154,9 +154,9 @@ def _format_to_store_block(match: ToMatch, settings: Settings) -> str:
 
     task_url = bitrix_task_url(visit.bitrix_task_id, settings)
     if task_url:
-        task_line = f"{_italic('Номер задачи -')} <a href=\"{_escape(task_url)}\">{_escape(task_url)}</a>"
+        task_line = f"{_italic('Ссылка на задачу -')} <a href=\"{_escape(task_url)}\">{_escape(task_url)}</a>"
     else:
-        task_line = f"{_italic('Номер задачи -')} -"
+        task_line = f"{_italic('Ссылка на задачу -')} -"
 
     work_label = visit.work_type.strip() if visit.work_type.strip() else "-"
     tt_total = to_store_price(match)
