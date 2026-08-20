@@ -27,13 +27,26 @@ def build_invoice_reply(
     query: str,
     matches: list[StoreMatch],
     settings: Settings,
-) -> str:
+) -> tuple[str, int]:
     if not matches:
-        return f"{query}: ТТ не найдена"
-    return "\n\n".join(_format_store_block(match, settings) for match in matches)
+        return f"{_escape(query)}: ТТ не найдена", 0
+    blocks = [_format_store_block(match, settings) for match in matches]
+    total = sum(store_price(match, settings) for match in matches)
+    return "\n\n".join(blocks), total
 
 
-def join_invoice_blocks(blocks: list[str]) -> list[str]:
+def store_price(match: StoreMatch, settings: Settings) -> int:
+    units = match.emm_count + match.flash_count + match.cube_count
+    if units <= 0:
+        return 0
+    return settings.price_base + settings.price_per_unit * units
+
+
+def format_total_line(total: int) -> str:
+    return f"<b>Итого сумма затрат составляет: {total} руб.</b>"
+
+
+def join_invoice_blocks(blocks: list[str], total: int | None = None) -> list[str]:
     """Собирает блоки в сообщения, не превышая лимит Telegram."""
     messages: list[str] = []
     current = ""
@@ -49,6 +62,17 @@ def join_invoice_blocks(blocks: list[str]) -> list[str]:
             current = block
     if current:
         messages.append(current)
+
+    if total is None or not messages:
+        return messages
+
+    total_line = format_total_line(total)
+    last = messages[-1]
+    candidate = f"{last}\n\n{total_line}"
+    if len(candidate) <= TELEGRAM_MESSAGE_LIMIT:
+        messages[-1] = candidate
+    else:
+        messages.append(total_line)
     return messages
 
 
@@ -70,9 +94,7 @@ def _format_store_block(match: StoreMatch, settings: Settings) -> str:
     store_name = _escape(match.query)
     header = f"<b>{store_name}</b>, {_escape(address)}" if address else f"<b>{store_name}</b>"
     work = _work_details(match.emm_count, match.flash_count, match.cube_count)
-    price = settings.price_base + settings.price_per_unit * (
-        match.emm_count + match.flash_count + match.cube_count
-    )
+    price = store_price(match, settings)
     if work:
         work_line = f"          — Выезд на ТО ({_bold_italic(work)}) - {price}"
     else:

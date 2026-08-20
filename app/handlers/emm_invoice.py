@@ -37,9 +37,12 @@ async def handle_emm_invoice(
 
     try:
         blocks: list[str] = []
+        total = 0
         for name in names:
             matches = await catalog.find_stores(name)
-            blocks.append(build_invoice_reply(name, matches, settings))
+            block, price = build_invoice_reply(name, matches, settings)
+            blocks.append(block)
+            total += price
     except SheetsError:
         logger.exception("Failed to load EMM sheet")
         await message.answer("Не удалось загрузить таблицу ЕММ. Попробуйте позже.")
@@ -49,5 +52,5 @@ async def handle_emm_invoice(
         await message.answer("Не удалось сформировать счёт. Попробуйте позже.")
         return
 
-    for chunk in join_invoice_blocks(blocks):
+    for chunk in join_invoice_blocks(blocks, total=total):
         await message.answer(chunk, parse_mode=ParseMode.HTML)
