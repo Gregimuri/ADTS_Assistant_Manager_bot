@@ -43,7 +43,7 @@ def store_price(match: StoreMatch, settings: Settings) -> int:
 
 
 def format_total_line(total: int) -> str:
-    return f"<b>Итого сумма затрат составляет: {total} руб.</b>"
+    return _bold(f"Итого сумма затрат составляет: {total} руб.")
 
 
 def join_invoice_blocks(blocks: list[str], total: int | None = None) -> list[str]:
@@ -85,8 +85,12 @@ def _escape(text: str) -> str:
     return html.escape(text, quote=False)
 
 
-def _bold_italic(text: str) -> str:
-    return f"<b><i>{_escape(text)}</i></b>"
+def _bold(text: str) -> str:
+    return f"<b>{_escape(text)}</b>"
+
+
+def _italic(text: str) -> str:
+    return f"<i>{_escape(text)}</i>"
 
 
 def _format_store_block(match: StoreMatch, settings: Settings) -> str:
@@ -96,12 +100,12 @@ def _format_store_block(match: StoreMatch, settings: Settings) -> str:
     work = _work_details(match.emm_count, match.flash_count, match.cube_count)
     price = store_price(match, settings)
     if work:
-        work_line = f"          — Выезд на ТО ({_bold_italic(work)}) - {price}"
+        work_line = f"          — Выезд на ТО ({_italic(work)}) - {price}"
     else:
         work_line = "          — Работы по ЕММ не найдены"
     return (
         f"{header}\n"
-        f"{_bold_italic('Ссылка на задачу -')} \n"
+        f"{_italic('Ссылка на задачу -')} \n"
         "Фото акта приложено.\n"
         f"{work_line}"
     )
