@@ -131,9 +131,16 @@ def _format_emm_store_block(match: StoreMatch, settings: Settings) -> str:
         work_line = f"          — Выезд на ТО ({_italic(work)}) - {price}"
     else:
         work_line = "          — Работы по ЕММ не найдены"
+
+    task_url = bitrix_task_url(match.bitrix_task_id, settings)
+    if task_url:
+        task_line = f"{_italic('Ссылка на задачу -')} <a href=\"{_escape(task_url)}\">{_escape(task_url)}</a>"
+    else:
+        task_line = f"{_italic('Ссылка на задачу -')} "
+
     return (
         f"{header}\n"
-        f"{_italic('Ссылка на задачу -')} \n"
+        f"{task_line}\n"
         "Фото акта приложено.\n"
         f"{work_line}"
     )
