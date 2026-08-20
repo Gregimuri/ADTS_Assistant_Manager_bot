@@ -4,7 +4,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from app.services.sheets import Player, SheetsClient
+from app.services.sheets import Player, SheetsClient, ToVisit
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +16,12 @@ class StoreMatch:
     emm_count: int
     flash_count: int
     cube_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ToMatch:
+    query: str
+    visit: ToVisit
 
 
 class Catalog:
@@ -46,6 +52,14 @@ class Catalog:
                 )
             )
         return result
+
+    async def find_to_visits(self, query: str) -> list[ToMatch]:
+        visits = await self._sheets.get_to_visits()
+        return [
+            ToMatch(query=query, visit=visit)
+            for visit in visits
+            if _name_matches(visit.name, query)
+        ]
 
 
 def _name_matches(player_name: str, query: str) -> bool:

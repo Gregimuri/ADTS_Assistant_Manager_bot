@@ -4,8 +4,10 @@ import asyncio
 import csv
 import io
 import logging
+import re
 import time
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import aiohttp
 
@@ -17,6 +19,8 @@ USER_AGENT = (
     "Mozilla/5.0 (compatible; AssistantManagerBot/1.0; "
     "+https://github.com/assistant-manager-bot)"
 )
+
+_MONEY_RE = re.compile(r"[^\d,.\-]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +34,16 @@ class Player:
     do_nothing: str
 
 
+@dataclass(frozen=True, slots=True)
+class ToVisit:
+    name: str
+    address: str
+    work_type: str
+    actual_cost: int
+    extra_cost: int
+    bitrix_task_id: str
+
+
 class SheetsError(RuntimeError):
     """Не удалось загрузить таблицу."""
 
@@ -38,33 +52,47 @@ class SheetsClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._players: list[Player] | None = None
-        self._loaded_at: float = 0.0
+        self._players_loaded_at: float = 0.0
+        self._to_visits: list[ToVisit] | None = None
+        self._to_loaded_at: float = 0.0
         self._lock = asyncio.Lock()
 
     async def get_players(self) -> list[Player]:
         async with self._lock:
             now = time.monotonic()
             ttl = self._settings.sheets_cache_ttl_seconds
-            if self._players is not None and now - self._loaded_at < ttl:
+            if self._players is not None and now - self._players_loaded_at < ttl:
                 return self._players
-            self._players = await self._fetch()
-            self._loaded_at = now
+            text = await self._fetch_csv(gid=self._settings.spreadsheet_gid)
+            self._players = _parse_emm_csv(text)
+            self._players_loaded_at = now
             logger.info("Loaded %s players from Google Sheets", len(self._players))
             return self._players
 
-    async def _fetch(self) -> list[Player]:
-        urls = [
-            (
-                "https://docs.google.com/spreadsheets/d/"
-                f"{self._settings.spreadsheet_id}/export?format=csv"
-                f"&gid={self._settings.spreadsheet_gid}"
-            ),
-            (
-                "https://docs.google.com/spreadsheets/d/"
-                f"{self._settings.spreadsheet_id}/gviz/tq?tqx=out:csv"
-                f"&gid={self._settings.spreadsheet_gid}"
-            ),
-        ]
+    async def get_to_visits(self) -> list[ToVisit]:
+        async with self._lock:
+            now = time.monotonic()
+            ttl = self._settings.sheets_cache_ttl_seconds
+            if self._to_visits is not None and now - self._to_loaded_at < ttl:
+                return self._to_visits
+            text = await self._fetch_csv(sheet=self._settings.to_sheet_name)
+            self._to_visits = _parse_to_csv(text)
+            self._to_loaded_at = now
+            logger.info("Loaded %s TO visits from Google Sheets", len(self._to_visits))
+            return self._to_visits
+
+    async def _fetch_csv(self, *, gid: int | None = None, sheet: str | None = None) -> str:
+        urls: list[str] = []
+        base = f"https://docs.google.com/spreadsheets/d/{self._settings.spreadsheet_id}"
+        if sheet:
+            urls.append(f"{base}/gviz/tq?tqx=out:csv&sheet={quote(sheet)}")
+        if gid is not None:
+            urls.extend(
+                [
+                    f"{base}/export?format=csv&gid={gid}",
+                    f"{base}/gviz/tq?tqx=out:csv&gid={gid}",
+                ]
+            )
         last_error: Exception | None = None
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -77,17 +105,40 @@ class SheetsClient:
                     ) as response:
                         response.raise_for_status()
                         text = await response.text()
-                    players = _parse_csv(text)
-                    if players:
-                        return players
-                    last_error = SheetsError("Таблица пуста или без ожидаемых колонок")
+                    if text.lstrip("\ufeff").startswith("<!"):
+                        raise SheetsError("Получен HTML вместо CSV")
+                    return text
                 except Exception as exc:  # noqa: BLE001 — пробуем запасной URL
                     last_error = exc
                     logger.warning("Failed to load sheet from %s: %s", url, exc)
         raise SheetsError(f"Не удалось загрузить таблицу: {last_error}") from last_error
 
 
-def _parse_csv(text: str) -> list[Player]:
+def parse_money(value: str) -> int:
+    raw = (value or "").strip()
+    if not raw:
+        return 0
+    cleaned = (
+        raw.replace("\xa0", "")
+        .replace("\u202f", "")
+        .replace(" ", "")
+        .replace("₽", "")
+        .strip()
+    )
+    cleaned = _MONEY_RE.sub("", cleaned)
+    if not cleaned or cleaned in {".", ",", "-", "-.", "-,"}:
+        return 0
+    if "," in cleaned and "." in cleaned:
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    elif "," in cleaned:
+        cleaned = cleaned.replace(",", ".")
+    try:
+        return int(round(float(cleaned)))
+    except ValueError:
+        return 0
+
+
+def _parse_emm_csv(text: str) -> list[Player]:
     text = text.lstrip("\ufeff")
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
@@ -98,10 +149,21 @@ def _parse_csv(text: str) -> list[Player]:
         logger.error("Sheet response is not a valid CSV header row")
         return []
 
-    field_map = _map_fields(headers)
+    field_map = _map_fields(
+        headers,
+        {
+            "object_number": ("objectnumber", "object number"),
+            "address": ("адрес", "address"),
+            "name": ("name", "имя", "название"),
+            "emm": ("емм", "emm"),
+            "reflash": ("перепрошить", "reflash"),
+            "cube": ("обновить кубик", "кубик"),
+            "do_nothing": ("ничего не делать",),
+        },
+    )
     required = ("object_number", "address", "name")
     if any(key not in field_map for key in required):
-        logger.error("Unexpected sheet headers: %s", headers)
+        logger.error("Unexpected EMM sheet headers: %s", headers)
         return []
 
     players: list[Player] = []
@@ -124,16 +186,51 @@ def _parse_csv(text: str) -> list[Player]:
     return players
 
 
-def _map_fields(fieldnames: list[str]) -> dict[str, str]:
-    aliases = {
-        "object_number": ("objectnumber", "object number"),
-        "address": ("адрес", "address"),
-        "name": ("name", "имя", "название"),
-        "emm": ("емм", "emm"),
-        "reflash": ("перепрошить", "reflash"),
-        "cube": ("обновить кубик", "кубик"),
-        "do_nothing": ("ничего не делать",),
-    }
+def _parse_to_csv(text: str) -> list[ToVisit]:
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    headers = list(reader.fieldnames)
+    if any(len(name) > 80 for name in headers):
+        logger.error("TO sheet response is not a valid CSV header row")
+        return []
+
+    field_map = _map_fields(
+        headers,
+        {
+            "name": ("название объекта", "name", "название"),
+            "address": ("адрес", "address"),
+            "work_type": ("вид работ",),
+            "actual_cost": ("фактическая стоимость работ",),
+            "extra_cost": ("доп затраты (компенсации)", "доп затраты"),
+            "bitrix_task_id": ("задача bitrix", "bitrix"),
+        },
+    )
+    if "name" not in field_map:
+        logger.error("Unexpected TO sheet headers: %s", headers)
+        return []
+
+    visits: list[ToVisit] = []
+    for row in reader:
+        name = _cell(row, field_map["name"])
+        if not name:
+            continue
+        visits.append(
+            ToVisit(
+                name=name,
+                address=_cell(row, field_map.get("address")),
+                work_type=_cell(row, field_map.get("work_type")),
+                actual_cost=parse_money(_cell(row, field_map.get("actual_cost"))),
+                extra_cost=parse_money(_cell(row, field_map.get("extra_cost"))),
+                bitrix_task_id=_cell(row, field_map.get("bitrix_task_id")),
+            )
+        )
+    return visits
+
+
+def _map_fields(fieldnames: list[str], aliases: dict[str, tuple[str, ...]]) -> dict[str, str]:
     normalized = {name: _normalize_header(name) for name in fieldnames}
     mapping: dict[str, str] = {}
     for key, options in aliases.items():
