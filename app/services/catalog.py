@@ -16,6 +16,7 @@ class StoreMatch:
     emm_count: int
     flash_count: int
     cube_count: int
+    bitrix_task_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,8 @@ class Catalog:
         if not matched:
             return []
 
+        bitrix_task_id = await self.find_emm_bitrix_task(query)
+
         groups: OrderedDict[str, list[Player]] = OrderedDict()
         for player in matched:
             groups.setdefault(player.object_number, []).append(player)
@@ -49,6 +52,7 @@ class Catalog:
                     emm_count=sum(1 for player in group if _is_emm_device(player)),
                     flash_count=sum(1 for player in group if _is_reflash(player)),
                     cube_count=sum(1 for player in group if _is_on_site_cube(player)),
+                    bitrix_task_id=bitrix_task_id,
                 )
             )
         return result
@@ -60,6 +64,19 @@ class Catalog:
             for visit in visits
             if _name_matches(visit.name, query)
         ]
+
+    async def find_emm_bitrix_task(self, query: str) -> str:
+        """Ищет в листе ТО задачу Bitrix, если в виде работ есть «ЕММ»."""
+        visits = await self._sheets.get_to_visits()
+        task_id = ""
+        for visit in visits:
+            if not _name_matches(visit.name, query):
+                continue
+            if "емм" not in visit.work_type.casefold():
+                continue
+            if visit.bitrix_task_id.strip():
+                task_id = visit.bitrix_task_id.strip()
+        return task_id
 
 
 def _name_matches(player_name: str, query: str) -> bool:
