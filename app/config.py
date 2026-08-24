@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     spreadsheet_id: str = "1sRy5VuFGEWsh_RZCGUkWKyKcLP8i6dO-F1smi4ok4Mk"
     spreadsheet_gid: int = 0
     to_sheet_name: str = "ТО"
+    directory_sheet_name: str = "Справочник"
     sheets_cache_ttl_seconds: int = 600
     price_base: int = 1000
     price_per_unit: int = 500

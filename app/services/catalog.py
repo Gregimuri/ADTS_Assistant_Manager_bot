@@ -4,7 +4,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from app.services.sheets import Player, SheetsClient, ToVisit
+from app.services.sheets import Player, ProjectStore, SheetsClient, ToVisit
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,22 @@ class StoreMatch:
 class ToMatch:
     query: str
     visit: ToVisit
+
+
+@dataclass(frozen=True, slots=True)
+class InfoMatch:
+    query: str
+    project: str
+    name: str
+    address: str
+    manager: str
+
+
+@dataclass(frozen=True, slots=True)
+class InfoQuery:
+    raw: str
+    search: str
+    project: str | None = None
 
 
 class Catalog:
@@ -77,6 +93,56 @@ class Catalog:
             if visit.bitrix_task_id.strip():
                 task_id = visit.bitrix_task_id.strip()
         return task_id
+
+    async def parse_info_queries(self, lines: list[str]) -> list[InfoQuery]:
+        projects = await self._sheets.get_project_names()
+        project_map = {name.casefold(): name for name in projects}
+        queries: list[InfoQuery] = []
+        for raw in lines:
+            parts = raw.split(maxsplit=1)
+            if len(parts) == 2 and parts[0].casefold() in project_map:
+                queries.append(
+                    InfoQuery(
+                        raw=raw,
+                        project=project_map[parts[0].casefold()],
+                        search=parts[1].strip(),
+                    )
+                )
+            else:
+                queries.append(InfoQuery(raw=raw, search=raw))
+        return queries
+
+    async def find_info_stores(self, query: InfoQuery) -> list[InfoMatch]:
+        if query.project:
+            stores = await self._sheets.get_project_stores(query.project)
+        else:
+            stores = await self._sheets.get_all_project_stores()
+
+        matches: list[InfoMatch] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for store in stores:
+            if not _project_store_matches(store, query.search):
+                continue
+            key = (store.project, store.name, store.address, store.manager)
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append(
+                InfoMatch(
+                    query=query.raw,
+                    project=store.project,
+                    name=store.name,
+                    address=store.address,
+                    manager=store.manager,
+                )
+            )
+        return matches
+
+
+def _project_store_matches(store: ProjectStore, query: str) -> bool:
+    if _name_matches(store.name, query):
+        return True
+    return any(_name_matches(code, query) for code in store.codes)
 
 
 def _name_matches(player_name: str, query: str) -> bool:

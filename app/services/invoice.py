@@ -4,11 +4,12 @@ import html
 import re
 
 from app.config import Settings
-from app.services.catalog import StoreMatch, ToMatch
+from app.services.catalog import InfoMatch, StoreMatch, ToMatch
 
 EMM_TAG_RE = re.compile(r"#счетемм", re.IGNORECASE)
 TO_TAG_RE = re.compile(r"#счетто", re.IGNORECASE)
-ANY_INVOICE_TAG_RE = re.compile(r"#счет(?:емм|то)", re.IGNORECASE)
+INFO_TAG_RE = re.compile(r"#инфотт", re.IGNORECASE)
+ANY_INVOICE_TAG_RE = re.compile(r"#(?:счет(?:емм|то)|инфотт)", re.IGNORECASE)
 TELEGRAM_MESSAGE_LIMIT = 4096
 
 
@@ -48,6 +49,12 @@ def build_to_invoice_reply(
     blocks = [_format_to_store_block(match, settings) for match in matches]
     total = sum(to_store_price(match) for match in matches)
     return "\n\n".join(blocks), total
+
+
+def build_info_reply(query: str, matches: list[InfoMatch]) -> str:
+    if not matches:
+        return f"{_escape(query)}: ТТ не найдена"
+    return "\n".join(_format_info_block(match) for match in matches)
 
 
 def store_price(match: StoreMatch, settings: Settings) -> int:
@@ -168,6 +175,17 @@ def _format_to_store_block(match: ToMatch, settings: Settings) -> str:
         f"          — Доп затраты - {visit.extra_cost} р\n"
         f"          {_bold(f'Итого сумма затрат по ТТ составляет: {tt_total} руб.')}"
     )
+
+
+def _format_info_block(match: InfoMatch) -> str:
+    title = f"{match.project} {match.name}".strip()
+    parts = [_bold(title)]
+    address = clean_address(match.address)
+    manager = match.manager.strip() or "-"
+    if address:
+        parts.append(_escape(address))
+    parts.append(_escape(manager))
+    return ", ".join(parts)
 
 
 def _work_details(emm_count: int, flash_count: int, cube_count: int) -> str:
