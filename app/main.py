@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from app.config import Settings, get_settings
-from app.handlers import emm_invoice_router, start_router, to_invoice_router
+from app.handlers import emm_invoice_router, info_tt_router, start_router, to_invoice_router
 from app.services.catalog import Catalog
 from app.services.sheets import SheetsClient
 
@@ -35,7 +35,12 @@ def _webhook_secret(bot_token: str) -> str:
 
 def _build_dispatcher(catalog: Catalog, settings: Settings) -> Dispatcher:
     dp = Dispatcher()
-    dp.include_routers(start_router, emm_invoice_router, to_invoice_router)
+    dp.include_routers(
+        start_router,
+        emm_invoice_router,
+        to_invoice_router,
+        info_tt_router,
+    )
     dp.workflow_data.update(catalog=catalog, settings=settings)
     return dp
 

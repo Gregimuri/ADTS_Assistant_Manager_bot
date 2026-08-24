@@ -44,6 +44,15 @@ class ToVisit:
     bitrix_task_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectStore:
+    project: str
+    name: str
+    address: str
+    manager: str
+    codes: tuple[str, ...] = ()
+
+
 class SheetsError(RuntimeError):
     """Не удалось загрузить таблицу."""
 
@@ -55,6 +64,10 @@ class SheetsClient:
         self._players_loaded_at: float = 0.0
         self._to_visits: list[ToVisit] | None = None
         self._to_loaded_at: float = 0.0
+        self._project_names: list[str] | None = None
+        self._project_names_loaded_at: float = 0.0
+        self._project_stores: dict[str, list[ProjectStore]] = {}
+        self._project_stores_loaded_at: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
     async def get_players(self) -> list[Player]:
@@ -80,6 +93,53 @@ class SheetsClient:
             self._to_loaded_at = now
             logger.info("Loaded %s TO visits from Google Sheets", len(self._to_visits))
             return self._to_visits
+
+    async def get_project_names(self) -> list[str]:
+        async with self._lock:
+            now = time.monotonic()
+            ttl = self._settings.sheets_cache_ttl_seconds
+            if self._project_names is not None and now - self._project_names_loaded_at < ttl:
+                return self._project_names
+        text = await self._fetch_csv(sheet=self._settings.directory_sheet_name)
+        names = _parse_directory_csv(text)
+        async with self._lock:
+            self._project_names = names
+            self._project_names_loaded_at = time.monotonic()
+            logger.info("Loaded %s projects from directory", len(names))
+            return names
+
+    async def get_project_stores(self, project: str) -> list[ProjectStore]:
+        async with self._lock:
+            now = time.monotonic()
+            ttl = self._settings.sheets_cache_ttl_seconds
+            loaded_at = self._project_stores_loaded_at.get(project)
+            if (
+                project in self._project_stores
+                and loaded_at is not None
+                and now - loaded_at < ttl
+            ):
+                return self._project_stores[project]
+        text = await self._fetch_csv(sheet=project)
+        stores = _parse_project_csv(text, project)
+        async with self._lock:
+            self._project_stores[project] = stores
+            self._project_stores_loaded_at[project] = time.monotonic()
+            logger.info("Loaded %s stores from project sheet %s", len(stores), project)
+            return stores
+
+    async def get_all_project_stores(self) -> list[ProjectStore]:
+        names = await self.get_project_names()
+        results = await asyncio.gather(
+            *[self.get_project_stores(name) for name in names],
+            return_exceptions=True,
+        )
+        stores: list[ProjectStore] = []
+        for name, result in zip(names, results, strict=True):
+            if isinstance(result, Exception):
+                logger.warning("Failed to load project sheet %s: %s", name, result)
+                continue
+            stores.extend(result)
+        return stores
 
     async def _fetch_csv(self, *, gid: int | None = None, sheet: str | None = None) -> str:
         urls: list[str] = []
@@ -228,6 +288,97 @@ def _parse_to_csv(text: str) -> list[ToVisit]:
             )
         )
     return visits
+
+
+def _parse_directory_csv(text: str) -> list[str]:
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    headers = [h for h in reader.fieldnames if h]
+    field_map = _map_fields(
+        headers,
+        {
+            "project": ("проекты", "проект", "projects", "project"),
+        },
+    )
+    key = field_map.get("project") or (headers[0] if headers else None)
+    if not key:
+        return []
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in reader:
+        name = _cell(row, key)
+        if not name:
+            continue
+        marker = name.casefold()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        names.append(name)
+    return names
+
+
+def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    headers = [h for h in reader.fieldnames if h]
+    if any(len(name) > 120 for name in headers):
+        logger.error("Project sheet %s response is not a valid CSV header row", project)
+        return []
+
+    field_map = _map_fields(
+        headers,
+        {
+            "name": (
+                "название тт",
+                "название объекта",
+                "название",
+                "уникальный 6-код",
+                "код тт",
+                "тк",
+                "номер дм",
+            ),
+            "address": ("адрес", "address"),
+            "manager": ("менеджер", "manager"),
+            "code": (
+                "уникальный 6-код",
+                "код тт",
+                "тк",
+                "номер дм",
+                "objectnumber",
+                "object number",
+            ),
+        },
+    )
+    if "name" not in field_map:
+        logger.error("Unexpected project sheet %s headers: %s", project, headers[:20])
+        return []
+
+    stores: list[ProjectStore] = []
+    for row in reader:
+        name = _cell(row, field_map["name"])
+        if not name:
+            continue
+        codes: list[str] = []
+        code = _cell(row, field_map.get("code"))
+        if code and code.casefold() != name.casefold():
+            codes.append(code)
+        stores.append(
+            ProjectStore(
+                project=project,
+                name=name,
+                address=_cell(row, field_map.get("address")),
+                manager=_cell(row, field_map.get("manager")),
+                codes=tuple(codes),
+            )
+        )
+    return stores
 
 
 def _map_fields(fieldnames: list[str], aliases: dict[str, tuple[str, ...]]) -> dict[str, str]:
