@@ -7,16 +7,30 @@ import sys
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from app.config import Settings, get_settings
-from app.handlers import emm_invoice_router, info_tt_router, start_router, to_invoice_router
+from app.handlers import (
+    emm_invoice_router,
+    info_tt_router,
+    menu_router,
+    start_router,
+    to_invoice_router,
+)
 from app.services.catalog import Catalog
 from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
 
 WEBHOOK_PATH = "/webhook"
+
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Меню и справка"),
+    BotCommand(command="help", description="Как пользоваться ботом"),
+    BotCommand(command="menu", description="Показать кнопки меню"),
+]
 
 
 def _configure_logging() -> None:
@@ -34,9 +48,10 @@ def _webhook_secret(bot_token: str) -> str:
 
 
 def _build_dispatcher(catalog: Catalog, settings: Settings) -> Dispatcher:
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
     dp.include_routers(
         start_router,
+        menu_router,
         emm_invoice_router,
         to_invoice_router,
         info_tt_router,
@@ -65,6 +80,7 @@ async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
         setup_application(app, dp, bot=bot)
 
         async def set_webhook(_app: web.Application) -> None:
+            await bot.set_my_commands(BOT_COMMANDS)
             await bot.set_webhook(
                 webhook_url,
                 secret_token=secret,
@@ -107,6 +123,7 @@ async def run() -> None:
 
     logger.info("Starting polling mode")
     try:
+        await bot.set_my_commands(BOT_COMMANDS)
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         await bot.session.close()

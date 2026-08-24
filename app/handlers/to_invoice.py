@@ -2,18 +2,15 @@ import logging
 import re
 
 from aiogram import Bot, F, Router
-from aiogram.enums import ChatAction, ParseMode
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.config import Settings
+from app.handlers.flows import parse_name_lines, reply_to_invoice
+from app.keyboards import CANCEL_BUTTONS, MAIN_BUTTONS, cancel_keyboard
 from app.services.catalog import Catalog
-from app.services.invoice import (
-    TO_TAG_RE,
-    build_to_invoice_reply,
-    join_invoice_blocks,
-    parse_store_names,
-)
-from app.services.sheets import SheetsError
+from app.services.invoice import TO_TAG_RE, parse_store_names
+from app.states import BotStates
 
 logger = logging.getLogger(__name__)
 
@@ -23,35 +20,42 @@ TAG_FILTER = F.text.regexp(re.compile(r"#счетто", re.IGNORECASE))
 
 
 @router.message(TAG_FILTER)
-async def handle_to_invoice(
+async def handle_to_tag(
     message: Message,
     bot: Bot,
     catalog: Catalog,
     settings: Settings,
+    state: FSMContext,
 ) -> None:
     names = parse_store_names(message.text or "", tag_re=TO_TAG_RE)
     if not names:
-        await message.answer("Укажите названия ТТ, каждое с новой строки после #СчетТО.")
+        await state.set_state(BotStates.waiting_to)
+        await message.answer(
+            "Пришлите названия ТТ — каждое с новой строки.",
+            reply_markup=cancel_keyboard(),
+        )
         return
+    await state.clear()
+    await reply_to_invoice(message, bot, catalog, settings, names)
 
-    await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-    try:
-        blocks: list[str] = []
-        total = 0
-        for name in names:
-            matches = await catalog.find_to_visits(name)
-            block, price = build_to_invoice_reply(name, matches, settings)
-            blocks.append(block)
-            total += price
-    except SheetsError:
-        logger.exception("Failed to load TO sheet")
-        await message.answer("Не удалось загрузить таблицу ТО. Попробуйте позже.")
+@router.message(BotStates.waiting_to, F.text)
+async def handle_to_names(
+    message: Message,
+    bot: Bot,
+    catalog: Catalog,
+    settings: Settings,
+    state: FSMContext,
+) -> None:
+    text = message.text or ""
+    if text in MAIN_BUTTONS or text in CANCEL_BUTTONS:
         return
-    except Exception:
-        logger.exception("Failed to build TO invoice")
-        await message.answer("Не удалось сформировать счёт. Попробуйте позже.")
+    names = parse_name_lines(text)
+    if not names:
+        await message.answer(
+            "Не вижу названий ТТ. Пришлите список — каждое с новой строки.",
+            reply_markup=cancel_keyboard(),
+        )
         return
-
-    for chunk in join_invoice_blocks(blocks, total=total):
-        await message.answer(chunk, parse_mode=ParseMode.HTML)
+    await state.clear()
+    await reply_to_invoice(message, bot, catalog, settings, names)
