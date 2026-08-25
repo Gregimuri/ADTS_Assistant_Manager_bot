@@ -30,6 +30,7 @@ class InfoMatch:
     query: str
     project: str
     name: str
+    region: str
     address: str
     manager: str
 
@@ -119,11 +120,11 @@ class Catalog:
             stores = await self._sheets.get_all_project_stores()
 
         matches: list[InfoMatch] = []
-        seen: set[tuple[str, str, str, str]] = set()
+        seen: set[tuple[str, str, str, str, str]] = set()
         for store in stores:
             if not _project_store_matches(store, query.search):
                 continue
-            key = (store.project, store.name, store.address, store.manager)
+            key = (store.project, store.name, store.region, store.address, store.manager)
             if key in seen:
                 continue
             seen.add(key)
@@ -132,6 +133,7 @@ class Catalog:
                     query=query.raw,
                     project=store.project,
                     name=store.name,
+                    region=store.region,
                     address=store.address,
                     manager=store.manager,
                 )

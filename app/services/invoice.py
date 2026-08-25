@@ -179,13 +179,17 @@ def _format_to_store_block(match: ToMatch, settings: Settings) -> str:
 
 def _format_info_block(match: InfoMatch) -> str:
     title = f"{match.project} {match.name}".strip()
-    parts = [_bold(title)]
-    address = clean_address(match.address)
+    region = match.region.strip() or "-"
+    address = clean_address(match.address) or "-"
     manager = match.manager.strip() or "-"
-    if address:
-        parts.append(_escape(address))
-    parts.append(_escape(manager))
-    return ", ".join(parts)
+    return " - ".join(
+        [
+            _bold(title),
+            _escape(region),
+            _escape(address),
+            _escape(manager),
+        ]
+    )
 
 
 def _work_details(emm_count: int, flash_count: int, cube_count: int) -> str:

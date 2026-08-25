@@ -48,6 +48,7 @@ class ToVisit:
 class ProjectStore:
     project: str
     name: str
+    region: str
     address: str
     manager: str
     codes: tuple[str, ...] = ()
@@ -344,6 +345,7 @@ def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
                 "тк",
                 "номер дм",
             ),
+            "region": ("регион", "область", "region"),
             "address": ("адрес", "address"),
             "manager": ("менеджер", "manager"),
             "code": (
@@ -373,6 +375,7 @@ def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
             ProjectStore(
                 project=project,
                 name=name,
+                region=_cell(row, field_map.get("region")),
                 address=_cell(row, field_map.get("address")),
                 manager=_cell(row, field_map.get("manager")),
                 codes=tuple(codes),
