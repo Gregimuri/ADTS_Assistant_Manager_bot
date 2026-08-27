@@ -199,6 +199,7 @@ async def reply_do_report(
     catalog: Catalog,
     settings: Settings,
 ) -> None:
+    await answer_text(message, "Собираю отчёт #ДО…", reply_markup=main_keyboard())
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     try:
         matches = await catalog.find_do_report_stores(settings)
@@ -228,15 +229,31 @@ async def reply_do_report(
         )
         return
 
-    chat_id = settings.do_report_chat_id
-    try:
-        for chunk in chunks:
-            await bot.send_message(chat_id, chunk, parse_mode=ParseMode.HTML)
-    except Exception:
-        logger.exception("Failed to send DO report to chat %s", chat_id)
+    chat_ids = _do_chat_id_candidates(settings.do_report_chat_id)
+    last_error: Exception | None = None
+    sent = False
+    for chat_id in chat_ids:
+        try:
+            for chunk in chunks:
+                await bot.send_message(chat_id, chunk, parse_mode=ParseMode.HTML)
+            logger.info("DO report sent to chat_id=%s (%s TT)", chat_id, len(matches))
+            sent = True
+            break
+        except Exception as exc:  # noqa: BLE001 — пробуем запасной chat_id
+            last_error = exc
+            logger.warning("Failed to send DO report to chat_id=%s: %s", chat_id, exc)
+
+    if not sent:
+        logger.error(
+            "Failed to send DO report to any of %s: %s",
+            chat_ids,
+            last_error,
+            exc_info=last_error,
+        )
         await answer_text(
             message,
-            "Не удалось отправить отчёт в группу. Проверьте, что бот добавлен в чат.",
+            "Не удалось отправить отчёт в группу. "
+            "Проверьте chat_id и что бот добавлен в чат.",
             reply_markup=main_keyboard(),
         )
         return
@@ -246,3 +263,19 @@ async def reply_do_report(
         f"Отправлено в группу: {len(matches)} ТТ.",
         reply_markup=main_keyboard(),
     )
+
+
+def _do_chat_id_candidates(chat_id: int) -> list[int]:
+    """Пробуем указанный id и типичный вариант с префиксом -100 для супергрупп."""
+    candidates = [chat_id]
+    absolute = abs(chat_id)
+    as_text = str(absolute)
+    if as_text.startswith("100") and len(as_text) > 3:
+        candidates.append(-int(as_text[3:]))
+    else:
+        candidates.append(-int(f"100{absolute}"))
+    unique: list[int] = []
+    for value in candidates:
+        if value not in unique:
+            unique.append(value)
+    return unique
