@@ -6,6 +6,7 @@ from aiogram import Bot
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.types import Message
 
+from app.chat_utils import is_group_chat, reply_markup_for
 from app.config import Settings
 from app.keyboards import main_keyboard
 from app.services.catalog import Catalog
@@ -44,6 +45,14 @@ PROMPT_INFO = (
     "Фасоль 703961"
 )
 
+GROUP_TAG_HINT = (
+    "В группе пришлите названия ТТ в том же сообщении под хэштегом.\n"
+    "Пример:\n"
+    "{tag}\n"
+    "Начинатель\n"
+    "Сахарозаводчица"
+)
+
 
 def parse_name_lines(text: str) -> list[str]:
     names: list[str] = []
@@ -53,6 +62,20 @@ def parse_name_lines(text: str) -> list[str]:
             continue
         names.append(line)
     return names
+
+
+async def answer_text(
+    message: Message,
+    text: str,
+    *,
+    parse_mode: str | None = None,
+    reply_markup=None,
+) -> None:
+    markup = reply_markup_for(message, reply_markup)
+    if is_group_chat(message):
+        await message.reply(text, parse_mode=parse_mode, reply_markup=markup)
+        return
+    await message.answer(text, parse_mode=parse_mode, reply_markup=markup)
 
 
 async def reply_emm_invoice(
@@ -73,14 +96,16 @@ async def reply_emm_invoice(
             total += price
     except SheetsError:
         logger.exception("Failed to load EMM sheet")
-        await message.answer(
+        await answer_text(
+            message,
             "Не удалось загрузить таблицу ЕММ. Попробуйте позже.",
             reply_markup=main_keyboard(),
         )
         return
     except Exception:
         logger.exception("Failed to build EMM invoice")
-        await message.answer(
+        await answer_text(
+            message,
             "Не удалось сформировать счёт. Попробуйте позже.",
             reply_markup=main_keyboard(),
         )
@@ -89,7 +114,7 @@ async def reply_emm_invoice(
     chunks = join_invoice_blocks(blocks, total=total)
     for index, chunk in enumerate(chunks):
         markup = main_keyboard() if index == len(chunks) - 1 else None
-        await message.answer(chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
+        await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
 async def reply_to_invoice(
@@ -110,14 +135,16 @@ async def reply_to_invoice(
             total += price
     except SheetsError:
         logger.exception("Failed to load TO sheet")
-        await message.answer(
+        await answer_text(
+            message,
             "Не удалось загрузить таблицу ТО. Попробуйте позже.",
             reply_markup=main_keyboard(),
         )
         return
     except Exception:
         logger.exception("Failed to build TO invoice")
-        await message.answer(
+        await answer_text(
+            message,
             "Не удалось сформировать счёт. Попробуйте позже.",
             reply_markup=main_keyboard(),
         )
@@ -126,7 +153,7 @@ async def reply_to_invoice(
     chunks = join_invoice_blocks(blocks, total=total)
     for index, chunk in enumerate(chunks):
         markup = main_keyboard() if index == len(chunks) - 1 else None
-        await message.answer(chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
+        await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
 async def reply_info_tt(
@@ -144,14 +171,16 @@ async def reply_info_tt(
             blocks.append(build_info_reply(query.raw, matches))
     except SheetsError:
         logger.exception("Failed to load project sheets")
-        await message.answer(
+        await answer_text(
+            message,
             "Не удалось загрузить справочник проектов. Попробуйте позже.",
             reply_markup=main_keyboard(),
         )
         return
     except Exception:
         logger.exception("Failed to build TT info")
-        await message.answer(
+        await answer_text(
+            message,
             "Не удалось найти информацию по ТТ. Попробуйте позже.",
             reply_markup=main_keyboard(),
         )
@@ -160,4 +189,4 @@ async def reply_info_tt(
     chunks = join_invoice_blocks(blocks)
     for index, chunk in enumerate(chunks):
         markup = main_keyboard() if index == len(chunks) - 1 else None
-        await message.answer(chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
+        await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)

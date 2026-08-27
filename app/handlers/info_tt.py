@@ -5,7 +5,8 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from app.handlers.flows import parse_name_lines, reply_info_tt
+from app.chat_utils import is_group_chat
+from app.handlers.flows import GROUP_TAG_HINT, answer_text, parse_name_lines, reply_info_tt
 from app.keyboards import CANCEL_BUTTONS, MAIN_BUTTONS, cancel_keyboard
 from app.services.catalog import Catalog
 from app.services.invoice import INFO_TAG_RE, parse_store_names
@@ -27,8 +28,13 @@ async def handle_info_tag(
 ) -> None:
     lines = parse_store_names(message.text or "", tag_re=INFO_TAG_RE)
     if not lines:
+        if is_group_chat(message):
+            await state.clear()
+            await answer_text(message, GROUP_TAG_HINT.format(tag="#ИнфоТТ"))
+            return
         await state.set_state(BotStates.waiting_info)
-        await message.answer(
+        await answer_text(
+            message,
             "Пришлите названия или коды ТТ — каждое с новой строки.\n"
             "Можно указать проект первым словом: Фасоль 703961",
             reply_markup=cancel_keyboard(),
@@ -50,7 +56,8 @@ async def handle_info_names(
         return
     names = parse_name_lines(text)
     if not names:
-        await message.answer(
+        await answer_text(
+            message,
             "Не вижу названий ТТ. Пришлите список — каждое с новой строки.",
             reply_markup=cancel_keyboard(),
         )
