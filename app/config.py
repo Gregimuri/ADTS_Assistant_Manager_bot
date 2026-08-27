@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     spreadsheet_gid: int = 0
     to_sheet_name: str = "ТО"
     directory_sheet_name: str = "Справочник"
+    do_sheet_name: str = "ДО"
+    do_report_chat_id: int = -5278414891
+    do_order_horizon_days: int = 17
     sheets_cache_ttl_seconds: int = 600
     price_base: int = 1000
     price_per_unit: int = 500

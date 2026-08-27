@@ -54,6 +54,19 @@ class ProjectStore:
     codes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class DoStore:
+    project: str
+    name: str
+    region: str
+    address: str
+    manager: str
+    logistics: str
+    expense_task: str
+    order_date_raw: str
+    acceptance: str
+
+
 class SheetsError(RuntimeError):
     """Не удалось загрузить таблицу."""
 
@@ -69,6 +82,8 @@ class SheetsClient:
         self._project_names_loaded_at: float = 0.0
         self._project_stores: dict[str, list[ProjectStore]] = {}
         self._project_stores_loaded_at: dict[str, float] = {}
+        self._do_stores: list[DoStore] | None = None
+        self._do_loaded_at: float = 0.0
         self._lock = asyncio.Lock()
 
     async def get_players(self) -> list[Player]:
@@ -141,6 +156,21 @@ class SheetsClient:
                 continue
             stores.extend(result)
         return stores
+
+    async def get_do_stores(self) -> list[DoStore]:
+        async with self._lock:
+            now = time.monotonic()
+            ttl = self._settings.sheets_cache_ttl_seconds
+            if self._do_stores is not None and now - self._do_loaded_at < ttl:
+                return self._do_stores
+        sheet = self._settings.do_sheet_name
+        text = await self._fetch_csv(sheet=sheet)
+        stores = _parse_do_csv(text, sheet)
+        async with self._lock:
+            self._do_stores = stores
+            self._do_loaded_at = time.monotonic()
+            logger.info("Loaded %s stores from DO sheet %s", len(stores), sheet)
+            return stores
 
     async def _fetch_csv(self, *, gid: int | None = None, sheet: str | None = None) -> str:
         urls: list[str] = []
@@ -379,6 +409,55 @@ def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
                 address=_cell(row, field_map.get("address")),
                 manager=_cell(row, field_map.get("manager")),
                 codes=tuple(codes),
+            )
+            )
+        return stores
+
+
+def _parse_do_csv(text: str, project: str) -> list[DoStore]:
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    headers = [h for h in reader.fieldnames if h]
+    if any(len(name) > 120 for name in headers):
+        logger.error("DO sheet %s response is not a valid CSV header row", project)
+        return []
+
+    field_map = _map_fields(
+        headers,
+        {
+            "name": ("название тт", "название объекта", "название"),
+            "region": ("регион", "область", "region"),
+            "address": ("адрес", "address"),
+            "manager": ("менеджер", "manager"),
+            "logistics": ("логистика",),
+            "expense_task": ("задача на расходку",),
+            "order_date": ("дата заказа",),
+            "acceptance": ("принятие объекта",),
+        },
+    )
+    if "name" not in field_map:
+        logger.error("Unexpected DO sheet %s headers: %s", project, headers[:20])
+        return []
+
+    stores: list[DoStore] = []
+    for row in reader:
+        name = _cell(row, field_map["name"])
+        if not name:
+            continue
+        stores.append(
+            DoStore(
+                project=project,
+                name=name,
+                region=_cell(row, field_map.get("region")),
+                address=_cell(row, field_map.get("address")),
+                manager=_cell(row, field_map.get("manager")),
+                logistics=_cell(row, field_map.get("logistics")),
+                expense_task=_cell(row, field_map.get("expense_task")),
+                order_date_raw=_cell(row, field_map.get("order_date")),
+                acceptance=_cell(row, field_map.get("acceptance")),
             )
         )
     return stores

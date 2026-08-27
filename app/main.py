@@ -13,6 +13,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 
 from app.config import Settings, get_settings
 from app.handlers import (
+    do_report_router,
     emm_invoice_router,
     info_tt_router,
     menu_router,
@@ -61,6 +62,7 @@ def _build_dispatcher(catalog: Catalog, settings: Settings) -> Dispatcher:
         emm_invoice_router,
         to_invoice_router,
         info_tt_router,
+        do_report_router,
     )
     dp.workflow_data.update(catalog=catalog, settings=settings)
     return dp
