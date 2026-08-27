@@ -58,11 +58,11 @@ def _build_dispatcher(catalog: Catalog, settings: Settings) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_routers(
         start_router,
+        do_report_router,
         menu_router,
         emm_invoice_router,
         to_invoice_router,
         info_tt_router,
-        do_report_router,
     )
     dp.workflow_data.update(catalog=catalog, settings=settings)
     return dp
