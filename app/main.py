@@ -8,7 +8,7 @@ import sys
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from app.config import Settings, get_settings
@@ -31,6 +31,12 @@ BOT_COMMANDS = [
     BotCommand(command="help", description="Как пользоваться ботом"),
     BotCommand(command="menu", description="Показать кнопки меню"),
 ]
+
+
+async def _setup_bot_commands(bot: Bot) -> None:
+    await bot.set_my_commands(BOT_COMMANDS)
+    await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats())
+    await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
 
 
 def _configure_logging() -> None:
@@ -80,11 +86,12 @@ async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
         setup_application(app, dp, bot=bot)
 
         async def set_webhook(_app: web.Application) -> None:
-            await bot.set_my_commands(BOT_COMMANDS)
+            await _setup_bot_commands(bot)
             await bot.set_webhook(
                 webhook_url,
                 secret_token=secret,
                 drop_pending_updates=True,
+                allowed_updates=["message", "edited_message", "callback_query"],
             )
             logger.info("Webhook set to %s", webhook_url)
 
@@ -102,7 +109,11 @@ async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
         if public_url:
             await asyncio.Event().wait()
         else:
-            await dp.start_polling(bot, drop_pending_updates=True)
+            await dp.start_polling(
+                bot,
+                drop_pending_updates=True,
+                allowed_updates=["message", "edited_message", "callback_query"],
+            )
     finally:
         await runner.cleanup()
         await bot.session.close()
@@ -123,8 +134,12 @@ async def run() -> None:
 
     logger.info("Starting polling mode")
     try:
-        await bot.set_my_commands(BOT_COMMANDS)
-        await dp.start_polling(bot, drop_pending_updates=True)
+        await _setup_bot_commands(bot)
+        await dp.start_polling(
+            bot,
+            drop_pending_updates=True,
+            allowed_updates=["message", "edited_message", "callback_query"],
+        )
     finally:
         await bot.session.close()
 

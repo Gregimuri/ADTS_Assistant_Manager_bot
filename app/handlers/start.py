@@ -3,6 +3,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from app.handlers.flows import answer_text
 from app.keyboards import BTN_HELP, main_keyboard
 
 router = Router(name="start")
@@ -21,14 +22,17 @@ HELP_TEXT = (
     "Аптека Методика\n\n"
     "#ИнфоТТ\n"
     "Гарантирование\n"
-    "Фасоль 703961"
+    "Фасоль 703961\n\n"
+    "В группе хэштеги работают так же: ТТ — в том же сообщении под тегом.\n"
+    "Бот должен видеть сообщения группы "
+    "(админ группы или Group Privacy Disable у @BotFather)."
 )
 
 
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(HELP_TEXT, reply_markup=main_keyboard())
+    await answer_text(message, HELP_TEXT, reply_markup=main_keyboard())
 
 
 @router.message(Command("help"))
@@ -36,4 +40,4 @@ async def handle_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == BTN_HELP)
 async def handle_help(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(HELP_TEXT, reply_markup=main_keyboard())
+    await answer_text(message, HELP_TEXT, reply_markup=main_keyboard())
