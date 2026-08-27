@@ -3,8 +3,13 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 
-from app.services.sheets import Player, ProjectStore, SheetsClient, ToVisit
+from app.config import Settings
+from app.services.sheets import DoStore, Player, ProjectStore, SheetsClient, ToVisit
+
+_MSK = timezone(timedelta(hours=3))
+_DATE_FORMATS = ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%y")
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +144,56 @@ class Catalog:
                 )
             )
         return matches
+
+    async def find_do_report_stores(self, settings: Settings) -> list[InfoMatch]:
+        stores = await self._sheets.get_do_stores()
+        today = datetime.now(_MSK).date()
+        deadline = today + timedelta(days=settings.do_order_horizon_days)
+        matches: list[InfoMatch] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for store in stores:
+            if not _do_store_matches(store, deadline):
+                continue
+            key = (store.name, store.region, store.address, store.manager)
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append(
+                InfoMatch(
+                    query=store.name,
+                    project=store.project,
+                    name=store.name,
+                    region=store.region,
+                    address=store.address,
+                    manager=store.manager,
+                )
+            )
+        return matches
+
+
+def _do_store_matches(store: DoStore, deadline: date) -> bool:
+    if store.logistics.strip():
+        return False
+    if store.expense_task.strip():
+        return False
+    if _normalize(store.acceptance) == "принят":
+        return False
+    order_date = _parse_ru_date(store.order_date_raw)
+    if order_date is None:
+        return False
+    return order_date <= deadline
+
+
+def _parse_ru_date(value: str) -> date | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _project_store_matches(store: ProjectStore, query: str) -> bool:

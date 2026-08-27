@@ -9,7 +9,8 @@ from app.services.catalog import InfoMatch, StoreMatch, ToMatch
 EMM_TAG_RE = re.compile(r"#счетемм", re.IGNORECASE)
 TO_TAG_RE = re.compile(r"#счетто", re.IGNORECASE)
 INFO_TAG_RE = re.compile(r"#инфотт", re.IGNORECASE)
-ANY_INVOICE_TAG_RE = re.compile(r"#(?:счет(?:емм|то)|инфотт)", re.IGNORECASE)
+DO_TAG_RE = re.compile(r"#до(?!\w)", re.IGNORECASE)
+ANY_INVOICE_TAG_RE = re.compile(r"#(?:счет(?:емм|то)|инфотт|до(?!\w))", re.IGNORECASE)
 TELEGRAM_MESSAGE_LIMIT = 4096
 
 
@@ -55,6 +56,12 @@ def build_info_reply(query: str, matches: list[InfoMatch]) -> str:
     if not matches:
         return f"{_escape(query)}: ТТ не найдена"
     return "\n".join(_format_info_block(match) for match in matches)
+
+
+def build_do_report_blocks(matches: list[InfoMatch]) -> list[str]:
+    if not matches:
+        return []
+    return join_invoice_blocks([_format_info_block(match) for match in matches])
 
 
 def store_price(match: StoreMatch, settings: Settings) -> int:

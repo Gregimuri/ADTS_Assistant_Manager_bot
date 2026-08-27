@@ -11,6 +11,7 @@ from app.config import Settings
 from app.keyboards import main_keyboard
 from app.services.catalog import Catalog
 from app.services.invoice import (
+    build_do_report_blocks,
     build_info_reply,
     build_invoice_reply,
     build_to_invoice_reply,
@@ -190,3 +191,58 @@ async def reply_info_tt(
     for index, chunk in enumerate(chunks):
         markup = main_keyboard() if index == len(chunks) - 1 else None
         await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def reply_do_report(
+    message: Message,
+    bot: Bot,
+    catalog: Catalog,
+    settings: Settings,
+) -> None:
+    await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    try:
+        matches = await catalog.find_do_report_stores(settings)
+        chunks = build_do_report_blocks(matches)
+    except SheetsError:
+        logger.exception("Failed to load DO sheet")
+        await answer_text(
+            message,
+            "Не удалось загрузить лист ДО. Попробуйте позже.",
+            reply_markup=main_keyboard(),
+        )
+        return
+    except Exception:
+        logger.exception("Failed to build DO report")
+        await answer_text(
+            message,
+            "Не удалось сформировать отчёт ДО. Попробуйте позже.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    if not chunks:
+        await answer_text(
+            message,
+            "Подходящих ТТ по #ДО сейчас нет.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    chat_id = settings.do_report_chat_id
+    try:
+        for chunk in chunks:
+            await bot.send_message(chat_id, chunk, parse_mode=ParseMode.HTML)
+    except Exception:
+        logger.exception("Failed to send DO report to chat %s", chat_id)
+        await answer_text(
+            message,
+            "Не удалось отправить отчёт в группу. Проверьте, что бот добавлен в чат.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    await answer_text(
+        message,
+        f"Отправлено в группу: {len(matches)} ТТ.",
+        reply_markup=main_keyboard(),
+    )
