@@ -12,6 +12,7 @@ INFO_TAG_RE = re.compile(r"#инфотт", re.IGNORECASE)
 DO_TAG_RE = re.compile(r"#до(?!\w)", re.IGNORECASE)
 ANY_INVOICE_TAG_RE = re.compile(r"#(?:счет(?:емм|то)|инфотт|до(?!\w))", re.IGNORECASE)
 TELEGRAM_MESSAGE_LIMIT = 4096
+DO_EMPTY_REPORT_MESSAGE = "на ближайшие 17 дней расходка везде отправлена"
 
 
 def parse_store_names(text: str, tag_re: re.Pattern[str] | None = None) -> list[str]:
@@ -60,7 +61,7 @@ def build_info_reply(query: str, matches: list[InfoMatch]) -> str:
 
 def build_do_report_blocks(matches: list[DoReportMatch]) -> list[str]:
     if not matches:
-        return []
+        return [DO_EMPTY_REPORT_MESSAGE]
 
     grouped: dict[str, list[DoReportMatch]] = {}
     manager_order: list[str] = []
@@ -71,15 +72,18 @@ def build_do_report_blocks(matches: list[DoReportMatch]) -> list[str]:
             manager_order.append(manager)
         grouped[manager].append(match)
 
-    lines = ["Отсутствует расходка по ДО:", ""]
+    lines = [_bold("Отсутствует расходка по ДО:"), ""]
     for manager in manager_order:
         stores = grouped[manager]
-        lines.append(f"{manager} - {len(stores)} ТТ")
+        lines.append(f"{_underline(manager)} - {_bold(f'{len(stores)} ТТ')}")
         for index, store in enumerate(stores, start=1):
             region = store.region.strip() or "-"
             address = clean_address(store.address) or "-"
             order_date = store.order_date.strip() or "-"
-            lines.append(f"{index}) {store.name} - {region} - {address} - {order_date}")
+            lines.append(
+                f"{index}) {_escape(store.name)} - {_escape(region)} - "
+                f"{_escape(address)} - {_bold(order_date)}"
+            )
         lines.append("")
 
     body = "\n".join(lines).rstrip()
@@ -181,6 +185,10 @@ def _bold(text: str) -> str:
 
 def _italic(text: str) -> str:
     return f"<i>{_escape(text)}</i>"
+
+
+def _underline(text: str) -> str:
+    return f"<u>{_escape(text)}</u>"
 
 
 def _format_emm_store_block(match: StoreMatch, settings: Settings) -> str:

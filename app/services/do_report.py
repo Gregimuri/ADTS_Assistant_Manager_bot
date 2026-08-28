@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, time, timedelta, timezone
 
 from aiogram import Bot
+from aiogram.enums import ParseMode
 
 from app.config import Settings
 from app.services.catalog import Catalog
@@ -15,27 +16,36 @@ logger = logging.getLogger(__name__)
 
 _MSK = timezone(timedelta(hours=3))
 _SCHEDULE_TIME = time(9, 5)
+_LEGACY_DO_REPORT_CHAT_IDS = frozenset({-5278414891, -1005278414891})
 
 
 async def send_do_report(bot: Bot, catalog: Catalog, settings: Settings) -> int:
     """Формирует и отправляет отчёт #ДО в целевую группу. Возвращает число ТТ."""
+    chat_id = settings.do_report_chat_id
+    if chat_id in _LEGACY_DO_REPORT_CHAT_IDS:
+        raise RuntimeError(
+            "DO_REPORT_CHAT_ID указывает на старую группу. "
+            "Задайте DO_REPORT_CHAT_ID=-4893962129 в окружении сервера."
+        )
+
     matches = await catalog.find_do_report_stores(settings)
     chunks = build_do_report_blocks(matches)
-    if not chunks:
-        logger.info("DO report is empty, nothing to send")
-        return 0
 
-    chat_ids = _report_chat_id_candidates(settings.do_report_chat_id)
+    chat_ids = _report_chat_id_candidates(chat_id)
     last_error: Exception | None = None
-    for chat_id in chat_ids:
+    for target_chat_id in chat_ids:
         try:
             for chunk in chunks:
-                await bot.send_message(chat_id, chunk)
-            logger.info("DO report sent to chat_id=%s (%s TT)", chat_id, len(matches))
+                await bot.send_message(target_chat_id, chunk, parse_mode=ParseMode.HTML)
+            logger.info(
+                "DO report sent to chat_id=%s (%s TT)",
+                target_chat_id,
+                len(matches),
+            )
             return len(matches)
         except Exception as exc:  # noqa: BLE001 — пробуем запасной формат chat_id
             last_error = exc
-            logger.warning("Failed to send DO report to chat_id=%s: %s", chat_id, exc)
+            logger.warning("Failed to send DO report to chat_id=%s: %s", target_chat_id, exc)
 
     raise RuntimeError(
         f"Could not send DO report to any of {chat_ids}: {last_error}"
