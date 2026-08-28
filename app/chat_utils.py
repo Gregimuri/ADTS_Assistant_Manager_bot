@@ -12,7 +12,7 @@ def reply_markup_for(
     message: Message,
     markup: ReplyKeyboardMarkup | ReplyKeyboardRemove | None,
 ) -> ReplyKeyboardMarkup | ReplyKeyboardRemove | None:
-    """Reply keyboards are private-chat UX; skip them in groups."""
+    """В группах убираем reply-клавиатуру; в личке оставляем кнопки."""
     if is_group_chat(message):
-        return None
+        return ReplyKeyboardRemove()
     return markup

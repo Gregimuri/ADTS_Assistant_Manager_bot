@@ -10,8 +10,8 @@ from app.chat_utils import is_group_chat, reply_markup_for
 from app.config import Settings
 from app.keyboards import main_keyboard
 from app.services.catalog import Catalog
+from app.services.do_report import send_do_report
 from app.services.invoice import (
-    build_do_report_blocks,
     build_info_reply,
     build_invoice_reply,
     build_to_invoice_reply,
@@ -202,8 +202,7 @@ async def reply_do_report(
     await answer_text(message, "Собираю отчёт #ДО…", reply_markup=main_keyboard())
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     try:
-        matches = await catalog.find_do_report_stores(settings)
-        chunks = build_do_report_blocks(matches)
+        count = await send_do_report(bot, catalog, settings)
     except SheetsError:
         logger.exception("Failed to load DO sheet")
         await answer_text(
@@ -213,15 +212,15 @@ async def reply_do_report(
         )
         return
     except Exception:
-        logger.exception("Failed to build DO report")
+        logger.exception("Failed to send DO report")
         await answer_text(
             message,
-            "Не удалось сформировать отчёт ДО. Попробуйте позже.",
+            "Не удалось отправить отчёт ДО. Проверьте chat_id и что бот в группе.",
             reply_markup=main_keyboard(),
         )
         return
 
-    if not chunks:
+    if count == 0:
         await answer_text(
             message,
             "Подходящих ТТ по #ДО сейчас нет.",
@@ -229,53 +228,8 @@ async def reply_do_report(
         )
         return
 
-    chat_ids = _do_chat_id_candidates(settings.do_report_chat_id)
-    last_error: Exception | None = None
-    sent = False
-    for chat_id in chat_ids:
-        try:
-            for chunk in chunks:
-                await bot.send_message(chat_id, chunk, parse_mode=ParseMode.HTML)
-            logger.info("DO report sent to chat_id=%s (%s TT)", chat_id, len(matches))
-            sent = True
-            break
-        except Exception as exc:  # noqa: BLE001 — пробуем запасной chat_id
-            last_error = exc
-            logger.warning("Failed to send DO report to chat_id=%s: %s", chat_id, exc)
-
-    if not sent:
-        logger.error(
-            "Failed to send DO report to any of %s: %s",
-            chat_ids,
-            last_error,
-            exc_info=last_error,
-        )
-        await answer_text(
-            message,
-            "Не удалось отправить отчёт в группу. "
-            "Проверьте chat_id и что бот добавлен в чат.",
-            reply_markup=main_keyboard(),
-        )
-        return
-
     await answer_text(
         message,
-        f"Отправлено в группу: {len(matches)} ТТ.",
+        f"Отправлено в группу: {count} ТТ.",
         reply_markup=main_keyboard(),
     )
-
-
-def _do_chat_id_candidates(chat_id: int) -> list[int]:
-    """Пробуем указанный id и типичный вариант с префиксом -100 для супергрупп."""
-    candidates = [chat_id]
-    absolute = abs(chat_id)
-    as_text = str(absolute)
-    if as_text.startswith("100") and len(as_text) > 3:
-        candidates.append(-int(as_text[3:]))
-    else:
-        candidates.append(-int(f"100{absolute}"))
-    unique: list[int] = []
-    for value in candidates:
-        if value not in unique:
-            unique.append(value)
-    return unique

@@ -47,6 +47,15 @@ class InfoQuery:
     project: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DoReportMatch:
+    name: str
+    region: str
+    address: str
+    manager: str
+    order_date: str
+
+
 class Catalog:
     def __init__(self, sheets: SheetsClient) -> None:
         self._sheets = sheets
@@ -145,33 +154,37 @@ class Catalog:
             )
         return matches
 
-    async def find_do_report_stores(self, settings: Settings) -> list[InfoMatch]:
+    async def find_do_report_stores(self, settings: Settings) -> list[DoReportMatch]:
         stores = await self._sheets.get_do_stores()
         today = datetime.now(_MSK).date()
-        deadline = today + timedelta(days=settings.do_order_horizon_days)
-        matches: list[InfoMatch] = []
-        seen: set[tuple[str, str, str, str]] = set()
+        matches: list[DoReportMatch] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
         for store in stores:
-            if not _do_store_matches(store, deadline):
+            if not _do_store_matches(store, settings, today):
                 continue
-            key = (store.name, store.region, store.address, store.manager)
+            key = (
+                store.name,
+                store.region,
+                store.address,
+                store.manager,
+                store.order_date_raw,
+            )
             if key in seen:
                 continue
             seen.add(key)
             matches.append(
-                InfoMatch(
-                    query=store.name,
-                    project=store.project,
+                DoReportMatch(
                     name=store.name,
                     region=store.region,
                     address=store.address,
                     manager=store.manager,
+                    order_date=store.order_date_raw,
                 )
             )
         return matches
 
 
-def _do_store_matches(store: DoStore, deadline: date) -> bool:
+def _do_store_matches(store: DoStore, settings: Settings, today: date) -> bool:
     if store.logistics.strip():
         return False
     if store.expense_task.strip():
@@ -181,7 +194,26 @@ def _do_store_matches(store: DoStore, deadline: date) -> bool:
     order_date = _parse_ru_date(store.order_date_raw)
     if order_date is None:
         return False
+    deadline = _do_order_deadline(store.region, settings, today)
     return order_date <= deadline
+
+
+def _do_order_deadline(region: str, settings: Settings, today: date) -> date:
+    if _is_moscow_region(region):
+        return today + timedelta(days=settings.do_moscow_order_horizon_days)
+    return today + timedelta(days=settings.do_order_horizon_days)
+
+
+def _is_moscow_region(region: str) -> bool:
+    norm = _normalize(region)
+    return norm in {
+        "москва",
+        "г москва",
+        "г. москва",
+        "московская область",
+        "московская обл",
+        "московская обл.",
+    }
 
 
 def _parse_ru_date(value: str) -> date | None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import sys
@@ -21,6 +22,7 @@ from app.handlers import (
     to_invoice_router,
 )
 from app.services.catalog import Catalog
+from app.services.do_report import run_do_report_scheduler
 from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
@@ -128,14 +130,15 @@ async def run() -> None:
     catalog = Catalog(sheets)
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(catalog, settings)
+    scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
 
-    if settings.port:
-        logger.info("Starting web mode for Render")
-        await _run_web(bot, dp, settings)
-        return
-
-    logger.info("Starting polling mode")
     try:
+        if settings.port:
+            logger.info("Starting web mode for Render")
+            await _run_web(bot, dp, settings)
+            return
+
+        logger.info("Starting polling mode")
         await _setup_bot_commands(bot)
         await dp.start_polling(
             bot,
@@ -143,6 +146,9 @@ async def run() -> None:
             allowed_updates=["message", "edited_message", "callback_query"],
         )
     finally:
+        scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler_task
         await bot.session.close()
 
 
