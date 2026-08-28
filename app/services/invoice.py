@@ -83,7 +83,33 @@ def build_do_report_blocks(matches: list[DoReportMatch]) -> list[str]:
         lines.append("")
 
     body = "\n".join(lines).rstrip()
-    return join_invoice_blocks([body])
+    return _split_long_message(body)
+
+
+def _split_long_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines():
+        candidate = f"{current}\n{line}".strip("\n") if current else line
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        if len(line) <= limit:
+            current = line
+            continue
+        start = 0
+        while start < len(line):
+            chunks.append(line[start : start + limit])
+            start += limit
+        current = ""
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def store_price(match: StoreMatch, settings: Settings) -> int:
