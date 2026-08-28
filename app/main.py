@@ -18,11 +18,13 @@ from app.handlers import (
     emm_invoice_router,
     info_tt_router,
     menu_router,
+    region_transfer_router,
     start_router,
     to_invoice_router,
 )
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
+from app.services.region_transfer import RegionTransferService
 from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
@@ -56,17 +58,26 @@ def _webhook_secret(bot_token: str) -> str:
     return hashlib.sha256(bot_token.encode()).hexdigest()
 
 
-def _build_dispatcher(catalog: Catalog, settings: Settings) -> Dispatcher:
+def _build_dispatcher(
+    catalog: Catalog,
+    region_transfer: RegionTransferService,
+    settings: Settings,
+) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_routers(
         start_router,
         do_report_router,
+        region_transfer_router,
         menu_router,
         emm_invoice_router,
         to_invoice_router,
         info_tt_router,
     )
-    dp.workflow_data.update(catalog=catalog, settings=settings)
+    dp.workflow_data.update(
+        catalog=catalog,
+        settings=settings,
+        region_transfer=region_transfer,
+    )
     return dp
 
 
@@ -128,8 +139,9 @@ async def run() -> None:
     settings = get_settings()
     sheets = SheetsClient(settings)
     catalog = Catalog(sheets)
+    region_transfer = RegionTransferService(sheets)
     bot = Bot(token=settings.bot_token)
-    dp = _build_dispatcher(catalog, settings)
+    dp = _build_dispatcher(catalog, region_transfer, settings)
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
 
     try:
