@@ -55,6 +55,16 @@ class ProjectStore:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectRow:
+    project: str
+    name: str
+    region: str
+    address: str
+    manager: str
+    smr_status: str
+
+
+@dataclass(frozen=True, slots=True)
 class DoStore:
     project: str
     name: str
@@ -82,6 +92,8 @@ class SheetsClient:
         self._project_names_loaded_at: float = 0.0
         self._project_stores: dict[str, list[ProjectStore]] = {}
         self._project_stores_loaded_at: dict[str, float] = {}
+        self._project_rows: dict[str, list[ProjectRow]] = {}
+        self._project_rows_loaded_at: dict[str, float] = {}
         self._do_stores: list[DoStore] | None = None
         self._do_loaded_at: float = 0.0
         self._lock = asyncio.Lock()
@@ -142,6 +154,25 @@ class SheetsClient:
             self._project_stores_loaded_at[project] = time.monotonic()
             logger.info("Loaded %s stores from project sheet %s", len(stores), project)
             return stores
+
+    async def get_project_rows(self, project: str) -> list[ProjectRow]:
+        async with self._lock:
+            now = time.monotonic()
+            ttl = self._settings.sheets_cache_ttl_seconds
+            loaded_at = self._project_rows_loaded_at.get(project)
+            if (
+                project in self._project_rows
+                and loaded_at is not None
+                and now - loaded_at < ttl
+            ):
+                return self._project_rows[project]
+        text = await self._fetch_csv(sheet=project)
+        rows = _parse_project_rows_csv(text, project)
+        async with self._lock:
+            self._project_rows[project] = rows
+            self._project_rows_loaded_at[project] = time.monotonic()
+            logger.info("Loaded %s rows from project sheet %s", len(rows), project)
+            return rows
 
     async def get_all_project_stores(self) -> list[ProjectStore]:
         names = await self.get_project_names()
@@ -412,6 +443,77 @@ def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
             )
         )
     return stores
+
+
+_SMR_STATUS_HEADERS = (
+    "статус смр",
+    "статус cmr",
+    "статус crm",
+    "статус сервиса",
+    "статус смр текущий",
+)
+
+
+def _find_smr_status_header(headers: list[str]) -> str | None:
+    normalized = {header: _normalize_header(header) for header in headers}
+    for target in _SMR_STATUS_HEADERS:
+        for original, norm in normalized.items():
+            if norm == target:
+                return original
+    return None
+
+
+def _parse_project_rows_csv(text: str, project: str) -> list[ProjectRow]:
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    headers = [header for header in reader.fieldnames if header]
+    if any(len(name) > 120 for name in headers):
+        logger.error("Project rows %s response is not a valid CSV header row", project)
+        return []
+
+    field_map = _map_fields(
+        headers,
+        {
+            "name": (
+                "название тт",
+                "название объекта",
+                "название",
+                "уникальный 6-код",
+                "код тт",
+                "тк",
+                "номер дм",
+            ),
+            "region": ("регион", "область", "region"),
+            "address": ("адрес", "address"),
+            "manager": ("менеджер", "manager"),
+        },
+    )
+    status_header = _find_smr_status_header(headers)
+    if "name" not in field_map:
+        logger.error("Unexpected project rows %s headers: %s", project, headers[:20])
+        return []
+    if not status_header:
+        logger.warning("SMR status column not found on project sheet %s", project)
+
+    rows: list[ProjectRow] = []
+    for row in reader:
+        name = _cell(row, field_map["name"])
+        if not name:
+            continue
+        rows.append(
+            ProjectRow(
+                project=project,
+                name=name,
+                region=_cell(row, field_map.get("region")),
+                address=_cell(row, field_map.get("address")),
+                manager=_cell(row, field_map.get("manager")),
+                smr_status=_cell(row, status_header),
+            )
+        )
+    return rows
 
 
 def _parse_do_csv(text: str, project: str) -> list[DoStore]:

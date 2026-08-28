@@ -1,5 +1,7 @@
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import default_state
 from aiogram.types import Message
 
 from app.chat_utils import is_group_chat
@@ -10,7 +12,7 @@ from app.states import BotStates
 router = Router(name="menu")
 
 
-@router.message(F.text == BTN_EMM)
+@router.message(F.text == BTN_EMM, StateFilter(default_state))
 async def start_emm(message: Message, state: FSMContext) -> None:
     if is_group_chat(message):
         await state.clear()
@@ -23,7 +25,7 @@ async def start_emm(message: Message, state: FSMContext) -> None:
     await answer_text(message, PROMPT_EMM, reply_markup=cancel_keyboard())
 
 
-@router.message(F.text == BTN_TO)
+@router.message(F.text == BTN_TO, StateFilter(default_state))
 async def start_to(message: Message, state: FSMContext) -> None:
     if is_group_chat(message):
         await state.clear()
@@ -36,7 +38,7 @@ async def start_to(message: Message, state: FSMContext) -> None:
     await answer_text(message, PROMPT_TO, reply_markup=cancel_keyboard())
 
 
-@router.message(F.text == BTN_INFO)
+@router.message(F.text == BTN_INFO, StateFilter(default_state))
 async def start_info(message: Message, state: FSMContext) -> None:
     if is_group_chat(message):
         await state.clear()
