@@ -410,8 +410,8 @@ def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
                 manager=_cell(row, field_map.get("manager")),
                 codes=tuple(codes),
             )
-            )
-        return stores
+        )
+    return stores
 
 
 def _parse_do_csv(text: str, project: str) -> list[DoStore]:
