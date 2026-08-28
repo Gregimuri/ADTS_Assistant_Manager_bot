@@ -20,6 +20,12 @@ services:
         value: "1000"
       - key: PRICE_PER_UNIT
         value: "500"
+      - key: DO_REPORT_CHAT_ID
+        value: "-4893962129"
+      - key: DO_ORDER_HORIZON_DAYS
+        value: "17"
+      - key: DO_MOSCOW_ORDER_HORIZON_DAYS
+        value: "2"
       - key: TO_SHEET_NAME
         value: ТО
       - key: DIRECTORY_SHEET_NAME

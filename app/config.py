@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     to_sheet_name: str = "ТО"
     directory_sheet_name: str = "Справочник"
     do_sheet_name: str = "ДО"
-    do_report_chat_id: int = -1004893962129
+    do_report_chat_id: int = -4893962129
     do_order_horizon_days: int = 17
     do_moscow_order_horizon_days: int = 2
     sheets_cache_ttl_seconds: int = 600

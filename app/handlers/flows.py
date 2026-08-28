@@ -11,6 +11,7 @@ from app.config import Settings
 from app.keyboards import main_keyboard
 from app.services.catalog import Catalog
 from app.services.do_report import send_do_report
+from app.services.invoice import DO_EMPTY_REPORT_MESSAGE
 from app.services.invoice import (
     build_info_reply,
     build_invoice_reply,
@@ -223,7 +224,7 @@ async def reply_do_report(
     if count == 0:
         await answer_text(
             message,
-            "Подходящих ТТ по #ДО сейчас нет.",
+            f"Отправлено в группу: {DO_EMPTY_REPORT_MESSAGE}.",
             reply_markup=main_keyboard(),
         )
         return
