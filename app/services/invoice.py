@@ -4,7 +4,7 @@ import html
 import re
 
 from app.config import Settings
-from app.services.catalog import InfoMatch, StoreMatch, ToMatch
+from app.services.catalog import DoReportMatch, InfoMatch, StoreMatch, ToMatch
 
 EMM_TAG_RE = re.compile(r"#счетемм", re.IGNORECASE)
 TO_TAG_RE = re.compile(r"#счетто", re.IGNORECASE)
@@ -58,10 +58,32 @@ def build_info_reply(query: str, matches: list[InfoMatch]) -> str:
     return "\n".join(_format_info_block(match) for match in matches)
 
 
-def build_do_report_blocks(matches: list[InfoMatch]) -> list[str]:
+def build_do_report_blocks(matches: list[DoReportMatch]) -> list[str]:
     if not matches:
         return []
-    return join_invoice_blocks([_format_info_block(match) for match in matches])
+
+    grouped: dict[str, list[DoReportMatch]] = {}
+    manager_order: list[str] = []
+    for match in matches:
+        manager = match.manager.strip() or "—"
+        if manager not in grouped:
+            grouped[manager] = []
+            manager_order.append(manager)
+        grouped[manager].append(match)
+
+    lines = ["Отсутствует расходка по ДО:", ""]
+    for manager in manager_order:
+        stores = grouped[manager]
+        lines.append(f"{manager} - {len(stores)} ТТ")
+        for index, store in enumerate(stores, start=1):
+            region = store.region.strip() or "-"
+            address = clean_address(store.address) or "-"
+            order_date = store.order_date.strip() or "-"
+            lines.append(f"{index}) {store.name} - {region} - {address} - {order_date}")
+        lines.append("")
+
+    body = "\n".join(lines).rstrip()
+    return join_invoice_blocks([body])
 
 
 def store_price(match: StoreMatch, settings: Settings) -> int:

@@ -1,0 +1,7 @@
+services:
+  bot:
+    build: .
+    image: adts-assistant-manager:latest
+    env_file:
+      - .env
+    restart: unless-stopped
