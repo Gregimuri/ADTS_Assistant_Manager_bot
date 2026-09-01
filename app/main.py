@@ -25,6 +25,7 @@ from app.handlers import (
     start_router,
     to_invoice_router,
 )
+from app.services.admin_report_scheduler import run_admin_report_scheduler
 from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
@@ -172,6 +173,9 @@ async def run() -> None:
         settings,
     )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
+    admin_scheduler_task = asyncio.create_task(
+        run_admin_report_scheduler(bot, exit_reports, assembly_reports, settings)
+    )
 
     try:
         if settings.port:
@@ -182,7 +186,10 @@ async def run() -> None:
         logger.info("Starting polling mode")
         await _start_polling(bot, dp)
     finally:
+        admin_scheduler_task.cancel()
         scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await admin_scheduler_task
         with contextlib.suppress(asyncio.CancelledError):
             await scheduler_task
         await bot.session.close()

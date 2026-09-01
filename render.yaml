@@ -38,6 +38,8 @@ services:
         value: "439"
       - key: REPORT_DATA_PATH
         value: data/reports.json
+      - key: SCHEDULED_EXIT_PROJECTS
+        value: ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО
       - key: DO_ORDER_HORIZON_DAYS
         value: "17"
       - key: DO_MOSCOW_ORDER_HORIZON_DAYS
