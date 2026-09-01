@@ -22,6 +22,10 @@ services:
         value: "500"
       - key: DO_REPORT_CHAT_ID
         value: "-4893962129"
+      - key: ADMIN_USER_IDS
+        value: "1029160022"
+      - key: DO_REPORT_USER_IDS
+        value: "1029160022"
       - key: DO_ORDER_HORIZON_DAYS
         value: "17"
       - key: DO_MOSCOW_ORDER_HORIZON_DAYS

@@ -8,8 +8,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.chat_utils import is_group_chat, reply_markup_for
+from app.access import keyboard_for_message
 from app.config import Settings
-from app.keyboards import do_confirm_keyboard, main_keyboard
+from app.keyboards import do_confirm_keyboard
 from app.services.catalog import Catalog
 from app.services.do_report import build_do_report, send_do_report_chunks
 from app.services.invoice import (
@@ -86,7 +87,7 @@ async def reply_emm_invoice(
         await answer_text(
             message,
             MSG_EMM_SHEET_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
@@ -95,14 +96,14 @@ async def reply_emm_invoice(
         await answer_text(
             message,
             MSG_EMM_BUILD_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
 
     chunks = join_invoice_blocks(blocks, total=total)
     for index, chunk in enumerate(chunks):
-        markup = main_keyboard() if index == len(chunks) - 1 else None
+        markup = keyboard_for_message(settings, message) if index == len(chunks) - 1 else None
         await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
@@ -127,7 +128,7 @@ async def reply_to_invoice(
         await answer_text(
             message,
             MSG_TO_SHEET_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
@@ -136,14 +137,14 @@ async def reply_to_invoice(
         await answer_text(
             message,
             MSG_TO_BUILD_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
 
     chunks = join_invoice_blocks(blocks, total=total)
     for index, chunk in enumerate(chunks):
-        markup = main_keyboard() if index == len(chunks) - 1 else None
+        markup = keyboard_for_message(settings, message) if index == len(chunks) - 1 else None
         await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
@@ -151,6 +152,7 @@ async def reply_info_tt(
     message: Message,
     bot: Bot,
     catalog: Catalog,
+    settings: Settings,
     names: list[str],
 ) -> None:
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
@@ -165,7 +167,7 @@ async def reply_info_tt(
         await answer_text(
             message,
             MSG_INFO_SHEET_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
@@ -174,14 +176,14 @@ async def reply_info_tt(
         await answer_text(
             message,
             MSG_INFO_BUILD_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
 
     chunks = join_invoice_blocks(blocks)
     for index, chunk in enumerate(chunks):
-        markup = main_keyboard() if index == len(chunks) - 1 else None
+        markup = keyboard_for_message(settings, message) if index == len(chunks) - 1 else None
         await answer_text(message, chunk, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
@@ -195,7 +197,7 @@ async def reply_do_report(
     await answer_text(
         message,
         MSG_DO_BUILDING,
-        reply_markup=main_keyboard(),
+        reply_markup=keyboard_for_message(settings, message),
         parse_mode=ParseMode.HTML,
     )
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
@@ -206,7 +208,7 @@ async def reply_do_report(
         await answer_text(
             message,
             MSG_DO_SHEET_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
@@ -215,7 +217,7 @@ async def reply_do_report(
         await answer_text(
             message,
             MSG_DO_BUILD_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard_for_message(settings, message),
             parse_mode=ParseMode.HTML,
         )
         return
@@ -224,7 +226,12 @@ async def reply_do_report(
         await answer_text(message, chunk, parse_mode=ParseMode.HTML)
 
     await state.set_state(BotStates.waiting_do_confirm)
-    await state.update_data(do_report_chunks=chunks, do_report_count=count)
+    user_id = message.from_user.id if message.from_user else None
+    await state.update_data(
+        do_report_chunks=chunks,
+        do_report_count=count,
+        do_report_user_id=user_id,
+    )
     await answer_text(
         message,
         MSG_DO_CONFIRM,

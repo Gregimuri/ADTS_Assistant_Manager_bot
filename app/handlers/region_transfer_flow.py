@@ -7,8 +7,9 @@ from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile, Message
 
+from app.access import keyboard_for_message
+from app.config import Settings
 from app.handlers.flows import answer_text
-from app.keyboards import main_keyboard
 from app.services.region_transfer import (
     RegionTransferRequest,
     RegionTransferService,
@@ -30,25 +31,27 @@ async def reply_region_transfer(
     message: Message,
     bot: Bot,
     service: RegionTransferService,
+    settings: Settings,
     request: RegionTransferRequest,
 ) -> None:
+    keyboard = keyboard_for_message(settings, message)
     await answer_text(
         message,
         MSG_REGIONS_BUILDING,
-        reply_markup=main_keyboard(),
+        reply_markup=keyboard,
         parse_mode=ParseMode.HTML,
     )
     try:
         result = await service.build_result(request)
     except ValueError as exc:
-        await answer_text(message, str(exc), reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
+        await answer_text(message, str(exc), reply_markup=keyboard, parse_mode=ParseMode.HTML)
         return
     except SheetsError:
         logger.exception("Failed to load project sheets for region transfer")
         await answer_text(
             message,
             MSG_REGIONS_SHEET_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -57,7 +60,7 @@ async def reply_region_transfer(
         await answer_text(
             message,
             MSG_REGIONS_BUILD_ERROR,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -66,7 +69,7 @@ async def reply_region_transfer(
         await answer_text(
             message,
             MSG_REGIONS_EMPTY,
-            reply_markup=main_keyboard(),
+            reply_markup=keyboard,
             parse_mode=ParseMode.HTML,
         )
         return
@@ -78,6 +81,6 @@ async def reply_region_transfer(
     await answer_text(
         message,
         MSG_REGIONS_DONE.format(count=result.total_rows, sheets=len(result.sheets)),
-        reply_markup=main_keyboard(),
+        reply_markup=keyboard,
         parse_mode=ParseMode.HTML,
     )

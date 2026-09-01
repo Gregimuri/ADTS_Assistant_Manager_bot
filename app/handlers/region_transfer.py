@@ -10,6 +10,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.chat_utils import is_group_chat
+from app.access import keyboard_for_message
+from app.config import Settings
 from app.handlers.flows import answer_text
 from app.handlers.region_transfer_flow import reply_region_transfer
 from app.keyboards import (
@@ -19,7 +21,6 @@ from app.keyboards import (
     BTN_REGIONS,
     CANCEL_BUTTONS,
     cancel_keyboard,
-    main_keyboard,
     projects_keyboard,
 )
 from app.services.region_transfer import (
@@ -105,11 +106,12 @@ async def handle_region_transfer_tag(
     bot: Bot,
     state: FSMContext,
     region_transfer: RegionTransferService,
+    settings: Settings,
 ) -> None:
     await state.clear()
     request = parse_region_transfer_message(message.text or "")
     if request:
-        await reply_region_transfer(message, bot, region_transfer, request)
+        await reply_region_transfer(message, bot, region_transfer, settings, request)
         return
     if is_group_chat(message):
         await answer_text(message, REGION_TRANSFER_HINT, parse_mode=ParseMode.HTML)
@@ -135,6 +137,7 @@ async def handle_regions_projects(
     message: Message,
     state: FSMContext,
     region_transfer: RegionTransferService,
+    settings: Settings,
 ) -> None:
     text = (message.text or "").strip()
     data = await state.get_data()
@@ -144,7 +147,12 @@ async def handle_regions_projects(
     if text in CANCEL_BUTTONS or text == BTN_MENU:
         await state.clear()
         label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
-        await answer_text(message, label, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
+        await answer_text(
+            message,
+            label,
+            reply_markup=keyboard_for_message(settings, message),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     if text == BTN_DONE:
@@ -216,12 +224,18 @@ async def handle_regions_manager(
     message: Message,
     state: FSMContext,
     region_transfer: RegionTransferService,
+    settings: Settings,
 ) -> None:
     text = (message.text or "").strip()
     if text in CANCEL_BUTTONS or text == BTN_MENU:
         await state.clear()
         label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
-        await answer_text(message, label, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
+        await answer_text(
+            message,
+            label,
+            reply_markup=keyboard_for_message(settings, message),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     data = await state.get_data()
@@ -264,6 +278,7 @@ async def handle_regions_regions(
     bot: Bot,
     state: FSMContext,
     region_transfer: RegionTransferService,
+    settings: Settings,
 ) -> None:
     text = (message.text or "").strip()
     data = await state.get_data()
@@ -275,7 +290,12 @@ async def handle_regions_regions(
     if text in CANCEL_BUTTONS or text == BTN_MENU:
         await state.clear()
         label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
-        await answer_text(message, label, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
+        await answer_text(
+            message,
+            label,
+            reply_markup=keyboard_for_message(settings, message),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     if text == BTN_DONE:
@@ -293,7 +313,7 @@ async def handle_regions_regions(
             manager=manager,
             regions=tuple(selected),
         )
-        await reply_region_transfer(message, bot, region_transfer, request)
+        await reply_region_transfer(message, bot, region_transfer, settings, request)
         return
 
     additions = _parse_selection(text, available)

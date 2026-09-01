@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     directory_sheet_name: str = "Справочник"
     do_sheet_name: str = "ДО"
     do_report_chat_id: int = -4893962129
+    admin_user_ids: frozenset[int] = frozenset({1029160022})
+    do_report_user_ids: frozenset[int] = frozenset({1029160022})
     do_order_horizon_days: int = 17
     do_moscow_order_horizon_days: int = 2
     sheets_cache_ttl_seconds: int = 600
@@ -36,6 +38,22 @@ class Settings(BaseSettings):
     @property
     def public_base_url(self) -> str:
         return self.webhook_base_url.rstrip("/")
+
+    @field_validator("admin_user_ids", "do_report_user_ids", mode="before")
+    @classmethod
+    def _parse_user_ids(cls, value: object) -> frozenset[int]:
+        if value is None or value == "":
+            return frozenset()
+        if isinstance(value, frozenset):
+            return value
+        if isinstance(value, int):
+            return frozenset({value})
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.split(",") if part.strip()]
+            return frozenset(int(part) for part in parts)
+        if isinstance(value, (list, tuple, set)):
+            return frozenset(int(item) for item in value)
+        raise ValueError(f"Invalid user id list: {value!r}")
 
 
 @lru_cache
