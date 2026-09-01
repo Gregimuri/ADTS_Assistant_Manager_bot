@@ -1,3 +1,4 @@
+from app.handlers.admin_reports import router as admin_reports_router
 from app.handlers.region_transfer import router as region_transfer_router
 from app.handlers.do_report import router as do_report_router
 from app.handlers.emm_invoice import router as emm_invoice_router
@@ -13,5 +14,6 @@ __all__ = [
     "to_invoice_router",
     "info_tt_router",
     "do_report_router",
+    "admin_reports_router",
     "region_transfer_router",
 ]

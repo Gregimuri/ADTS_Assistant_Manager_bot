@@ -26,6 +26,18 @@ services:
         value: "1029160022"
       - key: DO_REPORT_USER_IDS
         value: "1029160022"
+      - key: DO_REPORT_USER_IDS
+        value: "1029160022"
+      - key: ADMIN_REPORT_CHAT_ID
+        value: "-5278414891"
+      - key: BITRIX_WEBHOOK_URL
+        sync: false
+      - key: BITRIX_ASSEMBLY_RESPONSIBLE
+        value: Деркунский
+      - key: BITRIX_ASSEMBLY_CREATOR
+        value: Гравнов
+      - key: REPORT_DATA_PATH
+        value: data/reports.json
       - key: DO_ORDER_HORIZON_DAYS
         value: "17"
       - key: DO_MOSCOW_ORDER_HORIZON_DAYS
