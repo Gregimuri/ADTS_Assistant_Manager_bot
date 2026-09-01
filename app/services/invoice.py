@@ -12,7 +12,7 @@ INFO_TAG_RE = re.compile(r"#инфотт", re.IGNORECASE)
 DO_TAG_RE = re.compile(r"#до(?!\w)", re.IGNORECASE)
 ANY_INVOICE_TAG_RE = re.compile(r"#(?:счет(?:емм|то)|инфотт|до(?!\w))", re.IGNORECASE)
 TELEGRAM_MESSAGE_LIMIT = 4096
-DO_EMPTY_REPORT_MESSAGE = "на ближайшие 17 дней расходка везде отправлена"
+DO_EMPTY_REPORT_MESSAGE = "На ближайшие 17 дней расходка по ДО отправлена во все регионы"
 
 
 def parse_store_names(text: str, tag_re: re.Pattern[str] | None = None) -> list[str]:

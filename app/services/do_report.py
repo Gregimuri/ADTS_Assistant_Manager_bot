@@ -15,12 +15,29 @@ from app.services.sheets import SheetsError
 logger = logging.getLogger(__name__)
 
 _MSK = timezone(timedelta(hours=3))
-_SCHEDULE_TIME = time(9, 5)
+_SCHEDULE_TIMES = (time(9, 5), time(17, 30))
 _LEGACY_DO_REPORT_CHAT_IDS = frozenset({-5278414891, -1005278414891})
+
+
+async def build_do_report(catalog: Catalog, settings: Settings) -> tuple[int, list[str]]:
+    """Собирает отчёт #ДО. Возвращает число ТТ и фрагменты сообщения."""
+    matches = await catalog.find_do_report_stores(settings)
+    chunks = build_do_report_blocks(matches)
+    return len(matches), chunks
 
 
 async def send_do_report(bot: Bot, catalog: Catalog, settings: Settings) -> int:
     """Формирует и отправляет отчёт #ДО в целевую группу. Возвращает число ТТ."""
+    count, chunks = await build_do_report(catalog, settings)
+    await send_do_report_chunks(bot, settings, chunks)
+    return count
+
+
+async def send_do_report_chunks(
+    bot: Bot,
+    settings: Settings,
+    chunks: list[str],
+) -> None:
     chat_id = settings.do_report_chat_id
     if chat_id in _LEGACY_DO_REPORT_CHAT_IDS:
         raise RuntimeError(
@@ -28,21 +45,14 @@ async def send_do_report(bot: Bot, catalog: Catalog, settings: Settings) -> int:
             "Задайте DO_REPORT_CHAT_ID=-4893962129 в окружении сервера."
         )
 
-    matches = await catalog.find_do_report_stores(settings)
-    chunks = build_do_report_blocks(matches)
-
     chat_ids = _report_chat_id_candidates(chat_id)
     last_error: Exception | None = None
     for target_chat_id in chat_ids:
         try:
             for chunk in chunks:
                 await bot.send_message(target_chat_id, chunk, parse_mode=ParseMode.HTML)
-            logger.info(
-                "DO report sent to chat_id=%s (%s TT)",
-                target_chat_id,
-                len(matches),
-            )
-            return len(matches)
+            logger.info("DO report sent to chat_id=%s", target_chat_id)
+            return
         except Exception as exc:  # noqa: BLE001 — пробуем запасной формат chat_id
             last_error = exc
             logger.warning("Failed to send DO report to chat_id=%s: %s", target_chat_id, exc)
@@ -73,7 +83,7 @@ async def run_do_report_scheduler(
     catalog: Catalog,
     settings: Settings,
 ) -> None:
-    """Каждый будний день в 9:05 МСК отправляет отчёт #ДО."""
+    """По будням в 9:05 и 17:30 МСК отправляет отчёт #ДО в группу."""
     while True:
         now = datetime.now(_MSK)
         next_run = _next_weekday_run(now)
@@ -89,12 +99,18 @@ async def run_do_report_scheduler(
 
 
 def _next_weekday_run(now: datetime) -> datetime:
+    candidates: list[datetime] = []
     for days_ahead in range(8):
         day = (now + timedelta(days=days_ahead)).date()
         if day.weekday() >= 5:
             continue
-        run_at = datetime.combine(day, _SCHEDULE_TIME, tzinfo=_MSK)
-        if run_at > now:
-            return run_at
-    fallback = now + timedelta(days=1)
-    return fallback.replace(hour=9, minute=5, second=0, microsecond=0, tzinfo=_MSK)
+        for schedule_time in _SCHEDULE_TIMES:
+            run_at = datetime.combine(day, schedule_time, tzinfo=_MSK)
+            if run_at > now:
+                candidates.append(run_at)
+    if candidates:
+        return min(candidates)
+    fallback_day = now.date() + timedelta(days=1)
+    while fallback_day.weekday() >= 5:
+        fallback_day += timedelta(days=1)
+    return datetime.combine(fallback_day, _SCHEDULE_TIMES[0], tzinfo=_MSK)

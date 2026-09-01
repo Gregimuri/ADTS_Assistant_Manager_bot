@@ -4,14 +4,14 @@ import logging
 
 from aiogram import Bot
 from aiogram.enums import ChatAction, ParseMode
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.chat_utils import is_group_chat, reply_markup_for
 from app.config import Settings
-from app.keyboards import main_keyboard
+from app.keyboards import do_confirm_keyboard, main_keyboard
 from app.services.catalog import Catalog
-from app.services.do_report import send_do_report
-from app.services.invoice import DO_EMPTY_REPORT_MESSAGE
+from app.services.do_report import build_do_report, send_do_report_chunks
 from app.services.invoice import (
     build_info_reply,
     build_invoice_reply,
@@ -19,41 +19,26 @@ from app.services.invoice import (
     join_invoice_blocks,
 )
 from app.services.sheets import SheetsError
+from app.states import BotStates
+from app.texts import (
+    GROUP_TAG_HINT,
+    MSG_DO_BUILD_ERROR,
+    MSG_DO_BUILDING,
+    MSG_DO_CONFIRM,
+    MSG_DO_SHEET_ERROR,
+    MSG_EMM_BUILD_ERROR,
+    MSG_EMM_SHEET_ERROR,
+    MSG_INFO_BUILD_ERROR,
+    MSG_INFO_SHEET_ERROR,
+    MSG_NO_TT_NAMES,
+    MSG_TO_BUILD_ERROR,
+    MSG_TO_SHEET_ERROR,
+    PROMPT_EMM,
+    PROMPT_INFO,
+    PROMPT_TO,
+)
 
 logger = logging.getLogger(__name__)
-
-PROMPT_EMM = (
-    "Счёт ЕММ\n\n"
-    "Пришлите названия ТТ — каждое с новой строки.\n"
-    "Пример:\n"
-    "Начинатель\n"
-    "Сахарозаводчица"
-)
-
-PROMPT_TO = (
-    "Счёт ТО\n\n"
-    "Пришлите названия ТТ — каждое с новой строки.\n"
-    "Пример:\n"
-    "Аптека Методика\n"
-    "Черновицкий МД РзФ"
-)
-
-PROMPT_INFO = (
-    "Инфо ТТ\n\n"
-    "Пришлите названия или коды ТТ — каждое с новой строки.\n"
-    "Можно указать проект первым словом.\n"
-    "Пример:\n"
-    "Гарантирование\n"
-    "Фасоль 703961"
-)
-
-GROUP_TAG_HINT = (
-    "В группе пришлите названия ТТ в том же сообщении под хэштегом.\n"
-    "Пример:\n"
-    "{tag}\n"
-    "Начинатель\n"
-    "Сахарозаводчица"
-)
 
 
 def parse_name_lines(text: str) -> list[str]:
@@ -100,16 +85,18 @@ async def reply_emm_invoice(
         logger.exception("Failed to load EMM sheet")
         await answer_text(
             message,
-            "Не удалось загрузить таблицу ЕММ. Попробуйте позже.",
+            MSG_EMM_SHEET_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
     except Exception:
         logger.exception("Failed to build EMM invoice")
         await answer_text(
             message,
-            "Не удалось сформировать счёт. Попробуйте позже.",
+            MSG_EMM_BUILD_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -139,16 +126,18 @@ async def reply_to_invoice(
         logger.exception("Failed to load TO sheet")
         await answer_text(
             message,
-            "Не удалось загрузить таблицу ТО. Попробуйте позже.",
+            MSG_TO_SHEET_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
     except Exception:
         logger.exception("Failed to build TO invoice")
         await answer_text(
             message,
-            "Не удалось сформировать счёт. Попробуйте позже.",
+            MSG_TO_BUILD_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -175,16 +164,18 @@ async def reply_info_tt(
         logger.exception("Failed to load project sheets")
         await answer_text(
             message,
-            "Не удалось загрузить справочник проектов. Попробуйте позже.",
+            MSG_INFO_SHEET_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
     except Exception:
         logger.exception("Failed to build TT info")
         await answer_text(
             message,
-            "Не удалось найти информацию по ТТ. Попробуйте позже.",
+            MSG_INFO_BUILD_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -199,38 +190,44 @@ async def reply_do_report(
     bot: Bot,
     catalog: Catalog,
     settings: Settings,
+    state: FSMContext,
 ) -> None:
-    await answer_text(message, "Собираю отчёт #ДО…", reply_markup=main_keyboard())
+    await answer_text(
+        message,
+        MSG_DO_BUILDING,
+        reply_markup=main_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     try:
-        count = await send_do_report(bot, catalog, settings)
+        count, chunks = await build_do_report(catalog, settings)
     except SheetsError:
         logger.exception("Failed to load DO sheet")
         await answer_text(
             message,
-            "Не удалось загрузить лист ДО. Попробуйте позже.",
+            MSG_DO_SHEET_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
     except Exception:
-        logger.exception("Failed to send DO report")
+        logger.exception("Failed to build DO report")
         await answer_text(
             message,
-            "Не удалось отправить отчёт ДО. Проверьте chat_id и что бот в группе.",
+            MSG_DO_BUILD_ERROR,
             reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
-    if count == 0:
-        await answer_text(
-            message,
-            f"Отправлено в группу: {DO_EMPTY_REPORT_MESSAGE}.",
-            reply_markup=main_keyboard(),
-        )
-        return
+    for chunk in chunks:
+        await answer_text(message, chunk, parse_mode=ParseMode.HTML)
 
+    await state.set_state(BotStates.waiting_do_confirm)
+    await state.update_data(do_report_chunks=chunks, do_report_count=count)
     await answer_text(
         message,
-        f"Отправлено в группу: {count} ТТ.",
-        reply_markup=main_keyboard(),
+        MSG_DO_CONFIRM,
+        reply_markup=do_confirm_keyboard(),
+        parse_mode=ParseMode.HTML,
     )
