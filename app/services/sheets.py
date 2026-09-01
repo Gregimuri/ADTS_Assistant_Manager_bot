@@ -12,6 +12,7 @@ from urllib.parse import quote
 import aiohttp
 
 from app.config import Settings
+from app.services.exit_plan_columns import resolve_exit_date_headers
 
 logger = logging.getLogger(__name__)
 
@@ -545,41 +546,6 @@ def _parse_project_rows_csv(text: str, project: str) -> list[ProjectRow]:
     return rows
 
 
-    return rows
-
-
-_EXIT_DATE_SKIP_HEADERS = frozenset(
-    {
-        "дата заказа",
-        "дата создания",
-        "дата добавления",
-        "дата изменения",
-    }
-)
-_EXIT_DATE_KEYWORDS = (
-    "выход",
-    "скс",
-    "обслед",
-    "сервис",
-    "монтаж",
-    "выезд",
-    "повтор",
-)
-
-
-def _find_exit_date_headers(headers: list[str]) -> list[str]:
-    result: list[str] = []
-    for header in headers:
-        norm = _normalize_header(header)
-        if "дата" not in norm:
-            continue
-        if norm in _EXIT_DATE_SKIP_HEADERS:
-            continue
-        if any(keyword in norm for keyword in _EXIT_DATE_KEYWORDS):
-            result.append(header)
-    return result
-
-
 def _parse_project_exit_rows_csv(text: str, project: str) -> list[ProjectExitRow]:
     text = text.lstrip("\ufeff")
     reader = csv.DictReader(io.StringIO(text))
@@ -606,12 +572,12 @@ def _parse_project_exit_rows_csv(text: str, project: str) -> list[ProjectExitRow
         },
     )
     status_header = _find_smr_status_header(headers)
-    date_headers = _find_exit_date_headers(headers)
+    date_headers = resolve_exit_date_headers(project, headers)
     if "name" not in field_map:
         logger.error("Unexpected project exit rows %s headers: %s", project, headers[:20])
         return []
     if not date_headers:
-        logger.warning("Exit date columns not found on project sheet %s", project)
+        logger.warning("Exit plan date columns not configured or not found for %s", project)
 
     rows: list[ProjectExitRow] = []
     for row in reader:
