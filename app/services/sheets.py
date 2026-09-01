@@ -65,6 +65,14 @@ class ProjectRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectExitRow:
+    project: str
+    name: str
+    smr_status: str
+    exit_date_values: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DoStore:
     project: str
     name: str
@@ -94,6 +102,8 @@ class SheetsClient:
         self._project_stores_loaded_at: dict[str, float] = {}
         self._project_rows: dict[str, list[ProjectRow]] = {}
         self._project_rows_loaded_at: dict[str, float] = {}
+        self._project_exit_rows: dict[str, list[ProjectExitRow]] = {}
+        self._project_exit_rows_loaded_at: dict[str, float] = {}
         self._do_stores: list[DoStore] | None = None
         self._do_loaded_at: float = 0.0
         self._lock = asyncio.Lock()
@@ -172,6 +182,25 @@ class SheetsClient:
             self._project_rows[project] = rows
             self._project_rows_loaded_at[project] = time.monotonic()
             logger.info("Loaded %s rows from project sheet %s", len(rows), project)
+            return rows
+
+    async def get_project_exit_rows(self, project: str) -> list[ProjectExitRow]:
+        async with self._lock:
+            now = time.monotonic()
+            ttl = self._settings.sheets_cache_ttl_seconds
+            loaded_at = self._project_exit_rows_loaded_at.get(project)
+            if (
+                project in self._project_exit_rows
+                and loaded_at is not None
+                and now - loaded_at < ttl
+            ):
+                return self._project_exit_rows[project]
+        text = await self._fetch_csv(sheet=project)
+        rows = _parse_project_exit_rows_csv(text, project)
+        async with self._lock:
+            self._project_exit_rows[project] = rows
+            self._project_exit_rows_loaded_at[project] = time.monotonic()
+            logger.info("Loaded %s exit rows from project sheet %s", len(rows), project)
             return rows
 
     async def get_all_project_stores(self) -> list[ProjectStore]:
@@ -511,6 +540,91 @@ def _parse_project_rows_csv(text: str, project: str) -> list[ProjectRow]:
                 address=_cell(row, field_map.get("address")),
                 manager=_cell(row, field_map.get("manager")),
                 smr_status=_cell(row, status_header),
+            )
+        )
+    return rows
+
+
+    return rows
+
+
+_EXIT_DATE_SKIP_HEADERS = frozenset(
+    {
+        "дата заказа",
+        "дата создания",
+        "дата добавления",
+        "дата изменения",
+    }
+)
+_EXIT_DATE_KEYWORDS = (
+    "выход",
+    "скс",
+    "обслед",
+    "сервис",
+    "монтаж",
+    "выезд",
+    "повтор",
+)
+
+
+def _find_exit_date_headers(headers: list[str]) -> list[str]:
+    result: list[str] = []
+    for header in headers:
+        norm = _normalize_header(header)
+        if "дата" not in norm:
+            continue
+        if norm in _EXIT_DATE_SKIP_HEADERS:
+            continue
+        if any(keyword in norm for keyword in _EXIT_DATE_KEYWORDS):
+            result.append(header)
+    return result
+
+
+def _parse_project_exit_rows_csv(text: str, project: str) -> list[ProjectExitRow]:
+    text = text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    headers = [header for header in reader.fieldnames if header]
+    if any(len(name) > 120 for name in headers):
+        logger.error("Project exit rows %s response is not a valid CSV header row", project)
+        return []
+
+    field_map = _map_fields(
+        headers,
+        {
+            "name": (
+                "название тт",
+                "название объекта",
+                "название",
+                "уникальный 6-код",
+                "код тт",
+                "тк",
+                "номер дм",
+            ),
+        },
+    )
+    status_header = _find_smr_status_header(headers)
+    date_headers = _find_exit_date_headers(headers)
+    if "name" not in field_map:
+        logger.error("Unexpected project exit rows %s headers: %s", project, headers[:20])
+        return []
+    if not date_headers:
+        logger.warning("Exit date columns not found on project sheet %s", project)
+
+    rows: list[ProjectExitRow] = []
+    for row in reader:
+        name = _cell(row, field_map["name"])
+        if not name:
+            continue
+        date_values = tuple(_cell(row, header) for header in date_headers)
+        rows.append(
+            ProjectExitRow(
+                project=project,
+                name=name,
+                smr_status=_cell(row, status_header),
+                exit_date_values=date_values,
             )
         )
     return rows

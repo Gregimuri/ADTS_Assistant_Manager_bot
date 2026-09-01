@@ -12,8 +12,11 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
+from pathlib import Path
+
 from app.config import Settings, get_settings
 from app.handlers import (
+    admin_reports_router,
     do_report_router,
     emm_invoice_router,
     info_tt_router,
@@ -22,9 +25,12 @@ from app.handlers import (
     start_router,
     to_invoice_router,
 )
+from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
+from app.services.exit_reports import ExitReportsService
 from app.services.region_transfer import RegionTransferService
+from app.services.report_storage import ReportStorage
 from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
@@ -61,11 +67,14 @@ def _webhook_secret(bot_token: str) -> str:
 def _build_dispatcher(
     catalog: Catalog,
     region_transfer: RegionTransferService,
+    exit_reports: ExitReportsService,
+    assembly_reports: AssemblyReportsService,
     settings: Settings,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_routers(
         start_router,
+        admin_reports_router,
         do_report_router,
         region_transfer_router,
         menu_router,
@@ -77,6 +86,8 @@ def _build_dispatcher(
         catalog=catalog,
         settings=settings,
         region_transfer=region_transfer,
+        exit_reports=exit_reports,
+        assembly_reports=assembly_reports,
     )
     return dp
 
@@ -140,8 +151,17 @@ async def run() -> None:
     sheets = SheetsClient(settings)
     catalog = Catalog(sheets)
     region_transfer = RegionTransferService(sheets)
+    report_storage = ReportStorage(Path(settings.report_data_path))
+    exit_reports = ExitReportsService(sheets, report_storage)
+    assembly_reports = AssemblyReportsService(settings)
     bot = Bot(token=settings.bot_token)
-    dp = _build_dispatcher(catalog, region_transfer, settings)
+    dp = _build_dispatcher(
+        catalog,
+        region_transfer,
+        exit_reports,
+        assembly_reports,
+        settings,
+    )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
 
     try:

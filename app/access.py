@@ -24,7 +24,8 @@ def can_use_do_report(settings: Settings, user_id: int | None) -> bool:
 
 def user_main_keyboard(settings: Settings, user_id: int | None):
     show_do = can_use_do_report(settings, user_id)
-    return main_keyboard(show_do=show_do)
+    show_admin = is_admin(settings, user_id)
+    return main_keyboard(show_do=show_do, show_admin=show_admin)
 
 
 def keyboard_for_message(settings: Settings, message: Message):

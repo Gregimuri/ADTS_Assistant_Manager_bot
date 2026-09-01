@@ -19,8 +19,13 @@ class Settings(BaseSettings):
     directory_sheet_name: str = "Справочник"
     do_sheet_name: str = "ДО"
     do_report_chat_id: int = -4893962129
+    admin_report_chat_id: int = -5278414891
     admin_user_ids: frozenset[int] = frozenset({1029160022})
     do_report_user_ids: frozenset[int] = frozenset({1029160022})
+    bitrix_webhook_url: str = "https://adts.bitrix24.ru/rest/227/9hhckruwy6wbutw6/"
+    bitrix_assembly_responsible: str = "Деркунский"
+    bitrix_assembly_creator: str = "Гравнов"
+    report_data_path: str = "data/reports.json"
     do_order_horizon_days: int = 17
     do_moscow_order_horizon_days: int = 2
     sheets_cache_ttl_seconds: int = 600
