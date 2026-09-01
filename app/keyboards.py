@@ -7,11 +7,22 @@ BTN_REGIONS = "Передать регионы"
 BTN_HELP = "Помощь"
 BTN_CANCEL = "Отмена"
 BTN_MENU = "Меню"
+BTN_DO_SEND = "Отправить в группу"
+BTN_BACK = "Назад"
 BTN_DONE = "Готово"
 
 MAIN_BUTTONS = {BTN_EMM, BTN_TO, BTN_INFO, BTN_REGIONS, BTN_HELP, BTN_MENU}
-CANCEL_BUTTONS = {BTN_CANCEL, BTN_MENU}
-FLOW_BUTTONS = MAIN_BUTTONS | {BTN_DONE}
+CANCEL_BUTTONS = {BTN_CANCEL, BTN_MENU, BTN_BACK}
+FLOW_BUTTONS = MAIN_BUTTONS | {BTN_DONE, BTN_DO_SEND, BTN_BACK}
+
+
+def do_confirm_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_DO_SEND), KeyboardButton(text=BTN_BACK)],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:

@@ -8,3 +8,4 @@ class BotStates(StatesGroup):
     regions_projects = State()
     regions_manager = State()
     regions_regions = State()
+    waiting_do_confirm = State()

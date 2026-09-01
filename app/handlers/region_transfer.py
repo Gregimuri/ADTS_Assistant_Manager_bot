@@ -4,14 +4,14 @@ import logging
 import re
 
 from aiogram import Bot, F, Router
-from aiogram.enums import MessageEntityType
+from aiogram.enums import MessageEntityType, ParseMode
 from aiogram.filters import Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.chat_utils import is_group_chat
 from app.handlers.flows import answer_text
-from app.handlers.region_transfer_flow import REGION_TRANSFER_HINT, reply_region_transfer
+from app.handlers.region_transfer_flow import reply_region_transfer
 from app.keyboards import (
     BTN_CANCEL,
     BTN_DONE,
@@ -28,6 +28,23 @@ from app.services.region_transfer import (
     parse_region_transfer_message,
 )
 from app.states import BotStates
+from app.texts import (
+    MSG_CANCELLED,
+    MSG_MAIN_MENU,
+    MSG_REGIONS_MANAGER_NOT_FOUND,
+    MSG_REGIONS_NEED_PROJECT,
+    MSG_REGIONS_NEED_REGION,
+    MSG_REGIONS_NO_MANAGERS,
+    MSG_REGIONS_NO_REGIONS,
+    MSG_REGIONS_PICK_PROJECT,
+    MSG_REGIONS_PICK_REGION,
+    MSG_REGIONS_PICK_REGIONS,
+    MSG_REGIONS_PROJECTS_SELECTED,
+    MSG_REGIONS_PROJECTS_UPDATED,
+    MSG_REGIONS_REGIONS_UPDATED,
+    PROMPT_REGIONS_START,
+    REGION_TRANSFER_HINT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +93,9 @@ async def _start_private_flow(
     )
     await answer_text(
         message,
-        "Передать регионы\n\n"
-        "Выберите проекты кнопками или отправьте через запятую.\n"
-        "Когда закончите — нажмите «Готово».",
+        PROMPT_REGIONS_START,
         reply_markup=projects_keyboard(projects),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -96,7 +112,7 @@ async def handle_region_transfer_tag(
         await reply_region_transfer(message, bot, region_transfer, request)
         return
     if is_group_chat(message):
-        await answer_text(message, REGION_TRANSFER_HINT)
+        await answer_text(message, REGION_TRANSFER_HINT, parse_mode=ParseMode.HTML)
         return
     await _start_private_flow(message, state, region_transfer)
 
@@ -109,7 +125,7 @@ async def start_region_transfer_button(
 ) -> None:
     if is_group_chat(message):
         await state.clear()
-        await answer_text(message, REGION_TRANSFER_HINT)
+        await answer_text(message, REGION_TRANSFER_HINT, parse_mode=ParseMode.HTML)
         return
     await _start_private_flow(message, state, region_transfer)
 
@@ -127,29 +143,36 @@ async def handle_regions_projects(
 
     if text in CANCEL_BUTTONS or text == BTN_MENU:
         await state.clear()
-        label = "Главное меню." if text == BTN_MENU else "Отменено."
-        await answer_text(message, label, reply_markup=main_keyboard())
+        label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
+        await answer_text(message, label, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
         return
 
     if text == BTN_DONE:
         if not selected:
             await answer_text(
                 message,
-                "Сначала выберите хотя бы один проект.",
+                MSG_REGIONS_NEED_PROJECT,
                 reply_markup=projects_keyboard(available),
+                parse_mode=ParseMode.HTML,
             )
             return
         try:
             resolved = await region_transfer.resolve_projects(selected)
         except ValueError as exc:
-            await answer_text(message, str(exc), reply_markup=projects_keyboard(available))
+            await answer_text(
+                message,
+                str(exc),
+                reply_markup=projects_keyboard(available),
+                parse_mode=ParseMode.HTML,
+            )
             return
         managers = await region_transfer.list_managers(resolved)
         if not managers:
             await answer_text(
                 message,
-                "В выбранных проектах не найдено менеджеров.",
+                MSG_REGIONS_NO_MANAGERS,
                 reply_markup=projects_keyboard(available),
+                parse_mode=ParseMode.HTML,
             )
             return
         await state.update_data(selected_projects=resolved)
@@ -157,10 +180,12 @@ async def handle_regions_projects(
         manager_list = "\n".join(f"• {name}" for name in managers)
         await answer_text(
             message,
-            f"Выбрано проектов: {', '.join(resolved)}\n\n"
-            f"Менеджеры:\n{manager_list}\n\n"
-            "Введите имя менеджера точно как в списке.",
+            MSG_REGIONS_PROJECTS_SELECTED.format(
+                projects=", ".join(resolved),
+                manager_list=manager_list,
+            ),
             reply_markup=cancel_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -168,8 +193,9 @@ async def handle_regions_projects(
     if not additions:
         await answer_text(
             message,
-            "Не понял выбор. Нажмите проект или отправьте названия через запятую.",
+            MSG_REGIONS_PICK_PROJECT,
             reply_markup=projects_keyboard(available),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -179,8 +205,9 @@ async def handle_regions_projects(
     await state.update_data(selected_projects=selected)
     await answer_text(
         message,
-        f"Выбрано: {', '.join(selected)}\nНажмите «Готово», когда выберете все проекты.",
+        MSG_REGIONS_PROJECTS_UPDATED.format(selected=", ".join(selected)),
         reply_markup=projects_keyboard(available),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -193,8 +220,8 @@ async def handle_regions_manager(
     text = (message.text or "").strip()
     if text in CANCEL_BUTTONS or text == BTN_MENU:
         await state.clear()
-        label = "Главное меню." if text == BTN_MENU else "Отменено."
-        await answer_text(message, label, reply_markup=main_keyboard())
+        label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
+        await answer_text(message, label, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
         return
 
     data = await state.get_data()
@@ -204,8 +231,9 @@ async def handle_regions_manager(
     if not manager:
         await answer_text(
             message,
-            "Менеджер не найден. Введите имя точно как в списке.",
+            MSG_REGIONS_MANAGER_NOT_FOUND,
             reply_markup=cancel_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -213,8 +241,9 @@ async def handle_regions_manager(
     if not regions:
         await answer_text(
             message,
-            f"У менеджера «{manager}» нет регионов в выбранных проектах.",
+            MSG_REGIONS_NO_REGIONS.format(manager=manager),
             reply_markup=cancel_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -223,11 +252,9 @@ async def handle_regions_manager(
     region_list = "\n".join(f"• {name}" for name in regions)
     await answer_text(
         message,
-        f"Менеджер: {manager}\n\n"
-        f"Регионы:\n{region_list}\n\n"
-        "Отправьте регионы через запятую или по одному.\n"
-        "Когда закончите — нажмите «Готово».",
+        MSG_REGIONS_PICK_REGIONS.format(manager=manager, region_list=region_list),
         reply_markup=projects_keyboard(regions),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -247,16 +274,17 @@ async def handle_regions_regions(
 
     if text in CANCEL_BUTTONS or text == BTN_MENU:
         await state.clear()
-        label = "Главное меню." if text == BTN_MENU else "Отменено."
-        await answer_text(message, label, reply_markup=main_keyboard())
+        label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
+        await answer_text(message, label, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
         return
 
     if text == BTN_DONE:
         if not selected:
             await answer_text(
                 message,
-                "Сначала выберите хотя бы один регион.",
+                MSG_REGIONS_NEED_REGION,
                 reply_markup=projects_keyboard(available),
+                parse_mode=ParseMode.HTML,
             )
             return
         await state.clear()
@@ -272,8 +300,9 @@ async def handle_regions_regions(
     if not additions:
         await answer_text(
             message,
-            "Не понял выбор. Нажмите регион или отправьте названия через запятую.",
+            MSG_REGIONS_PICK_REGION,
             reply_markup=projects_keyboard(available),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -283,9 +312,12 @@ async def handle_regions_regions(
     await state.update_data(selected_regions=selected)
     await answer_text(
         message,
-        f"Выбрано регионов: {len(selected)}\n{', '.join(selected)}\n\n"
-        "Нажмите «Готово», когда выберете все регионы.",
+        MSG_REGIONS_REGIONS_UPDATED.format(
+            count=len(selected),
+            selected=", ".join(selected),
+        ),
         reply_markup=projects_keyboard(available),
+        parse_mode=ParseMode.HTML,
     )
 
 
