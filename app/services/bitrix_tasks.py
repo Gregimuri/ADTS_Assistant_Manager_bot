@@ -9,9 +9,11 @@ from urllib.parse import urljoin
 import aiohttp
 
 from app.config import Settings
-from app.services.dates import parse_ru_date
+from app.services.dates import msk_today, parse_ru_date
 
 logger = logging.getLogger(__name__)
+
+_PAGE_SIZE = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +21,7 @@ class BitrixTask:
     task_id: str
     title: str
     description: str
+    description_bbcode: str
     status: int
     real_status: int
     created_date: date | None
@@ -40,12 +43,28 @@ class BitrixTasksClient:
         if not self._settings.bitrix_webhook_url.strip():
             raise BitrixTasksError("BITRIX_WEBHOOK_URL не задан.")
 
-        raw_tasks = await self._fetch_all_tasks()
-        matched = [task for task in raw_tasks if _matches_assembly_task(task, self._settings)]
+        base_filter = {
+            "RESPONSIBLE_ID": self._settings.bitrix_assembly_responsible_id,
+            "CREATED_BY": self._settings.bitrix_assembly_creator_id,
+        }
+        today_start = _bitrix_day_start(msk_today())
+        fetch_filters = [
+            {**base_filter, "!REAL_STATUS": 5},
+            {**base_filter, ">CREATED_DATE": today_start},
+            {**base_filter, "REAL_STATUS": 5, ">CLOSED_DATE": today_start},
+        ]
+
+        tasks_by_id: dict[str, BitrixTask] = {}
+        for extra_filter in fetch_filters:
+            for task in await self._fetch_tasks(extra_filter):
+                if _matches_assembly_task(task, self._settings):
+                    tasks_by_id[task.task_id] = task
+
+        matched = list(tasks_by_id.values())
         logger.info("Loaded %s assembly tasks from Bitrix", len(matched))
         return matched
 
-    async def _fetch_all_tasks(self) -> list[BitrixTask]:
+    async def _fetch_tasks(self, filter_params: dict[str, Any]) -> list[BitrixTask]:
         tasks: list[BitrixTask] = []
         start = 0
         timeout = aiohttp.ClientTimeout(total=60)
@@ -59,6 +78,7 @@ class BitrixTasksClient:
                             "ID",
                             "TITLE",
                             "DESCRIPTION",
+                            "DESCRIPTION_IN_BBCODE",
                             "STATUS",
                             "REAL_STATUS",
                             "CREATED_DATE",
@@ -66,10 +86,7 @@ class BitrixTasksClient:
                             "RESPONSIBLE_ID",
                             "CREATED_BY",
                         ],
-                        "filter": {
-                            "RESPONSIBLE_ID": self._settings.bitrix_assembly_responsible_id,
-                            "CREATED_BY": self._settings.bitrix_assembly_creator_id,
-                        },
+                        "filter": filter_params,
                         "start": start,
                     },
                 )
@@ -78,10 +95,14 @@ class BitrixTasksClient:
                     parsed = _parse_task(item)
                     if parsed is not None:
                         tasks.append(parsed)
+
                 next_start = payload.get("next")
-                if next_start is None:
+                if next_start is not None:
+                    start = int(next_start)
+                    continue
+                if len(batch) < _PAGE_SIZE:
                     break
-                start = int(next_start)
+                start += _PAGE_SIZE
         return tasks
 
     async def _call(
@@ -99,6 +120,8 @@ class BitrixTasksClient:
         if data.get("error"):
             raise BitrixTasksError(f"Bitrix API: {data.get('error_description') or data['error']}")
         result = data.get("result")
+        if isinstance(result, list):
+            return {"tasks": result}
         if not isinstance(result, dict):
             raise BitrixTasksError("Bitrix API: пустой result.")
         return result
@@ -129,8 +152,7 @@ def count_assembly_completed_today(tasks: list[BitrixTask], today: date) -> int:
 
 
 def _matches_assembly_task(task: BitrixTask, settings: Settings) -> bool:
-    text = f"{task.title} {task.description}".casefold()
-    if "сборка" not in text:
+    if "сборка" not in _task_text(task):
         return False
     return (
         task.responsible_id == settings.bitrix_assembly_responsible_id
@@ -138,14 +160,28 @@ def _matches_assembly_task(task: BitrixTask, settings: Settings) -> bool:
     )
 
 
+def _task_text(task: BitrixTask) -> str:
+    return f"{task.title} {task.description} {task.description_bbcode}".casefold()
+
+
 def _is_open(task: BitrixTask) -> bool:
-    return task.real_status != 5 and task.status != 5
+    status = task.real_status or task.status
+    return status != 5
 
 
 def _parse_task(raw: dict[str, Any]) -> BitrixTask | None:
     task_id = str(raw.get("id") or raw.get("ID") or "").strip()
     if not task_id:
         return None
+    status = int(raw.get("status") or raw.get("STATUS") or 0)
+    real_status = int(
+        raw.get("realStatus")
+        or raw.get("REAL_STATUS")
+        or raw.get("subStatus")
+        or raw.get("SUB_STATUS")
+        or status
+        or 0
+    )
     responsible_id = _parse_user_id(
         raw.get("responsibleId")
         or raw.get("RESPONSIBLE_ID")
@@ -160,8 +196,11 @@ def _parse_task(raw: dict[str, Any]) -> BitrixTask | None:
         task_id=task_id,
         title=str(raw.get("title") or raw.get("TITLE") or ""),
         description=str(raw.get("description") or raw.get("DESCRIPTION") or ""),
-        status=int(raw.get("status") or raw.get("STATUS") or 0),
-        real_status=int(raw.get("realStatus") or raw.get("REAL_STATUS") or 0),
+        description_bbcode=str(
+            raw.get("descriptionInBbcode") or raw.get("DESCRIPTION_IN_BBCODE") or ""
+        ),
+        status=status,
+        real_status=real_status,
         created_date=_parse_bitrix_date(raw.get("createdDate") or raw.get("CREATED_DATE")),
         closed_date=_parse_bitrix_date(raw.get("closedDate") or raw.get("CLOSED_DATE")),
         responsible_id=responsible_id,
@@ -182,6 +221,10 @@ def _nested_user_id(value: object) -> object:
     if isinstance(value, dict):
         return value.get("id") or value.get("ID")
     return value
+
+
+def _bitrix_day_start(day: date) -> str:
+    return f"{day.isoformat()}T00:00:00+03:00"
 
 
 def _parse_bitrix_date(value: object) -> date | None:
