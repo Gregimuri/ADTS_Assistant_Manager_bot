@@ -31,10 +31,10 @@ async def run_admin_report_scheduler(
     assembly_reports: AssemblyReportsService,
     settings: Settings,
 ) -> None:
-    """По будням в 9:00 и 17:30 МСК отправляет админ-отчёты в группу."""
+    """Каждый день в 9:00 и 17:30 МСК отправляет админ-отчёты в группу."""
     while True:
         now = datetime.now(_MSK)
-        next_run, slot = _next_weekday_run(now)
+        next_run, slot = _next_run(now)
         delay = (next_run - now).total_seconds()
         logger.info(
             "Next admin report (%s) scheduled at %s (in %.0f s)",
@@ -112,23 +112,16 @@ async def _scheduled_projects(
     return await exit_reports.resolve_projects(raw)
 
 
-def _next_weekday_run(now: datetime) -> tuple[datetime, _ScheduleSlot]:
+def _next_run(now: datetime) -> tuple[datetime, _ScheduleSlot]:
     schedule = (
         (_MORNING_TIME, _ScheduleSlot.MORNING),
         (_EVENING_TIME, _ScheduleSlot.EVENING),
     )
-    candidates: list[tuple[datetime, _ScheduleSlot]] = []
-    for days_ahead in range(8):
+    for days_ahead in range(2):
         day = (now + timedelta(days=days_ahead)).date()
-        if day.weekday() >= 5:
-            continue
         for schedule_time, slot in schedule:
             run_at = datetime.combine(day, schedule_time, tzinfo=_MSK)
             if run_at > now:
-                candidates.append((run_at, slot))
-    if candidates:
-        return min(candidates, key=lambda item: item[0])
-    fallback_day = now.date() + timedelta(days=1)
-    while fallback_day.weekday() >= 5:
-        fallback_day += timedelta(days=1)
-    return datetime.combine(fallback_day, _MORNING_TIME, tzinfo=_MSK), _ScheduleSlot.MORNING
+                return run_at, slot
+    tomorrow = now.date() + timedelta(days=1)
+    return datetime.combine(tomorrow, _MORNING_TIME, tzinfo=_MSK), _ScheduleSlot.MORNING
