@@ -50,6 +50,19 @@ async def _setup_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
 
 
+async def _start_polling(bot: Bot, dp: Dispatcher) -> None:
+    """Polling несовместим с активным webhook — снимаем его перед стартом."""
+    deleted = await bot.delete_webhook(drop_pending_updates=True)
+    if deleted:
+        logger.info("Removed active Telegram webhook before polling")
+    await _setup_bot_commands(bot)
+    await dp.start_polling(
+        bot,
+        drop_pending_updates=True,
+        allowed_updates=["message", "edited_message", "callback_query"],
+    )
+
+
 def _configure_logging() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -135,11 +148,7 @@ async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
         if public_url:
             await asyncio.Event().wait()
         else:
-            await dp.start_polling(
-                bot,
-                drop_pending_updates=True,
-                allowed_updates=["message", "edited_message", "callback_query"],
-            )
+            await _start_polling(bot, dp)
     finally:
         await runner.cleanup()
         await bot.session.close()
@@ -171,12 +180,7 @@ async def run() -> None:
             return
 
         logger.info("Starting polling mode")
-        await _setup_bot_commands(bot)
-        await dp.start_polling(
-            bot,
-            drop_pending_updates=True,
-            allowed_updates=["message", "edited_message", "callback_query"],
-        )
+        await _start_polling(bot, dp)
     finally:
         scheduler_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
