@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.chat_utils import is_group_chat
+from app.config import Settings
 from app.handlers.flows import answer_text, parse_name_lines, reply_info_tt
 from app.keyboards import CANCEL_BUTTONS, FLOW_BUTTONS, cancel_keyboard
 from app.services.catalog import Catalog
@@ -25,6 +26,7 @@ async def handle_info_tag(
     message: Message,
     bot: Bot,
     catalog: Catalog,
+    settings: Settings,
     state: FSMContext,
 ) -> None:
     lines = parse_store_names(message.text or "", tag_re=INFO_TAG_RE)
@@ -37,7 +39,7 @@ async def handle_info_tag(
         await answer_text(message, PROMPT_INFO, reply_markup=cancel_keyboard(), parse_mode="HTML")
         return
     await state.clear()
-    await reply_info_tt(message, bot, catalog, lines)
+    await reply_info_tt(message, bot, catalog, settings, lines)
 
 
 @router.message(BotStates.waiting_info, F.text)
@@ -45,6 +47,7 @@ async def handle_info_names(
     message: Message,
     bot: Bot,
     catalog: Catalog,
+    settings: Settings,
     state: FSMContext,
 ) -> None:
     text = message.text or ""
@@ -60,4 +63,4 @@ async def handle_info_names(
         )
         return
     await state.clear()
-    await reply_info_tt(message, bot, catalog, names)
+    await reply_info_tt(message, bot, catalog, settings, names)
