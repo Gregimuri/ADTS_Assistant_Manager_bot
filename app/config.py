@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     admin_user_ids: frozenset[int] = frozenset({1029160022})
     do_report_user_ids: frozenset[int] = frozenset({1029160022})
     bitrix_webhook_url: str = "https://adts.bitrix24.ru/rest/227/9hhckruwy6wbutw6/"
-    bitrix_assembly_responsible: str = "Деркунский"
-    bitrix_assembly_creator: str = "Гравнов"
+    bitrix_assembly_responsible_id: int = 197
+    bitrix_assembly_creator_id: int = 439
     report_data_path: str = "data/reports.json"
     do_order_horizon_days: int = 17
     do_moscow_order_horizon_days: int = 2

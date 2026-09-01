@@ -23,8 +23,8 @@ class BitrixTask:
     real_status: int
     created_date: date | None
     closed_date: date | None
-    responsible_name: str
-    creator_name: str
+    responsible_id: int
+    creator_id: int
 
 
 class BitrixTasksError(RuntimeError):
@@ -63,9 +63,13 @@ class BitrixTasksClient:
                             "REAL_STATUS",
                             "CREATED_DATE",
                             "CLOSED_DATE",
-                            "RESPONSIBLE_NAME",
-                            "CREATED_BY_NAME",
+                            "RESPONSIBLE_ID",
+                            "CREATED_BY",
                         ],
+                        "filter": {
+                            "RESPONSIBLE_ID": self._settings.bitrix_assembly_responsible_id,
+                            "CREATED_BY": self._settings.bitrix_assembly_creator_id,
+                        },
                         "start": start,
                     },
                 )
@@ -128,13 +132,10 @@ def _matches_assembly_task(task: BitrixTask, settings: Settings) -> bool:
     text = f"{task.title} {task.description}".casefold()
     if "сборка" not in text:
         return False
-    responsible = settings.bitrix_assembly_responsible.casefold()
-    creator = settings.bitrix_assembly_creator.casefold()
-    if responsible not in task.responsible_name.casefold():
-        return False
-    if creator not in task.creator_name.casefold():
-        return False
-    return True
+    return (
+        task.responsible_id == settings.bitrix_assembly_responsible_id
+        and task.creator_id == settings.bitrix_assembly_creator_id
+    )
 
 
 def _is_open(task: BitrixTask) -> bool:
@@ -145,12 +146,16 @@ def _parse_task(raw: dict[str, Any]) -> BitrixTask | None:
     task_id = str(raw.get("id") or raw.get("ID") or "").strip()
     if not task_id:
         return None
-    responsible_name = _person_name(raw.get("responsible") or raw.get("RESPONSIBLE"))
-    if not responsible_name:
-        responsible_name = str(raw.get("responsibleName") or raw.get("RESPONSIBLE_NAME") or "")
-    creator_name = _person_name(raw.get("creator") or raw.get("CREATOR"))
-    if not creator_name:
-        creator_name = str(raw.get("createdByName") or raw.get("CREATED_BY_NAME") or "")
+    responsible_id = _parse_user_id(
+        raw.get("responsibleId")
+        or raw.get("RESPONSIBLE_ID")
+        or _nested_user_id(raw.get("responsible") or raw.get("RESPONSIBLE"))
+    )
+    creator_id = _parse_user_id(
+        raw.get("createdBy")
+        or raw.get("CREATED_BY")
+        or _nested_user_id(raw.get("creator") or raw.get("CREATOR"))
+    )
     return BitrixTask(
         task_id=task_id,
         title=str(raw.get("title") or raw.get("TITLE") or ""),
@@ -159,21 +164,24 @@ def _parse_task(raw: dict[str, Any]) -> BitrixTask | None:
         real_status=int(raw.get("realStatus") or raw.get("REAL_STATUS") or 0),
         created_date=_parse_bitrix_date(raw.get("createdDate") or raw.get("CREATED_DATE")),
         closed_date=_parse_bitrix_date(raw.get("closedDate") or raw.get("CLOSED_DATE")),
-        responsible_name=responsible_name,
-        creator_name=creator_name,
+        responsible_id=responsible_id,
+        creator_id=creator_id,
     )
 
 
-def _person_name(value: object) -> str:
+def _parse_user_id(value: object) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _nested_user_id(value: object) -> object:
     if isinstance(value, dict):
-        for key in ("name", "NAME", "lastName", "LAST_NAME"):
-            part = value.get(key)
-            if part:
-                return str(part).strip()
-        first = str(value.get("name") or value.get("NAME") or "").strip()
-        last = str(value.get("lastName") or value.get("LAST_NAME") or "").strip()
-        return " ".join(part for part in (first, last) if part).strip()
-    return str(value or "").strip()
+        return value.get("id") or value.get("ID")
+    return value
 
 
 def _parse_bitrix_date(value: object) -> date | None:

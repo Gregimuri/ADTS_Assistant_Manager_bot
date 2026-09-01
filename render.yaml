@@ -32,10 +32,10 @@ services:
         value: "-5278414891"
       - key: BITRIX_WEBHOOK_URL
         sync: false
-      - key: BITRIX_ASSEMBLY_RESPONSIBLE
-        value: Деркунский
-      - key: BITRIX_ASSEMBLY_CREATOR
-        value: Гравнов
+      - key: BITRIX_ASSEMBLY_RESPONSIBLE_ID
+        value: "197"
+      - key: BITRIX_ASSEMBLY_CREATOR_ID
+        value: "439"
       - key: REPORT_DATA_PATH
         value: data/reports.json
       - key: DO_ORDER_HORIZON_DAYS
