@@ -15,6 +15,7 @@ _TAG_ASSEMBLY_REPORT = re.compile(r"#отчетсборки", re.IGNORECASE)
 
 _STATUS_COMPLETED = "выполнен"
 _STATUS_FINAL = "финальный"
+_DO_CUMULATIVE_UNTIL = date(2026, 9, 11)
 
 
 class ExitReportsService:
@@ -82,6 +83,44 @@ class ExitReportsService:
                 ]
             )
         return "\n".join(lines).rstrip()
+
+    async def build_do_cumulative_report(
+        self,
+        *,
+        until: date | None = None,
+        report_day: date | None = None,
+        project: str = "ДО",
+    ) -> str:
+        deadline = until or _DO_CUMULATIVE_UNTIL
+        today = report_day or msk_today()
+        resolved = (await self.resolve_projects([project]))[0]
+        rows = await self._sheets.get_project_exit_rows(resolved)
+
+        seen: set[str] = set()
+        total = 0
+        done = 0
+        for row in rows:
+            if row.name in seen:
+                continue
+            mount_date = _row_mount_date(row)
+            if mount_date is None or mount_date > deadline:
+                continue
+            seen.add(row.name)
+            total += 1
+            status = _normalize_status(row.smr_status)
+            if status in (_STATUS_COMPLETED, _STATUS_FINAL):
+                done += 1
+
+        remaining = total - done
+        deadline_short = deadline.strftime("%d.%m")
+        return "\n".join(
+            [
+                f"ОТЧЕТ по ДО до {deadline_short} на {format_ru_date(today)}",
+                f"Всего - {total} ТТ",
+                f"Сделано (финальный/выполнен) - {done} ТТ",
+                f"Осталось - {remaining} ТТ",
+            ]
+        )
 
     async def _count_exits_for_projects(
         self,
@@ -166,6 +205,12 @@ def _row_has_exit_on(row: ProjectExitRow, target_day: date) -> bool:
         if parsed == target_day:
             return True
     return False
+
+
+def _row_mount_date(row: ProjectExitRow) -> date | None:
+    if not row.exit_date_values:
+        return None
+    return parse_ru_date(row.exit_date_values[0])
 
 
 def _normalize_status(value: str) -> str:

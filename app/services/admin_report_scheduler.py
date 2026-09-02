@@ -88,6 +88,10 @@ async def _send_evening_reports(
     try:
         text = await exit_reports.build_exit_report(projects)
         await send_report_text(bot, settings, text)
+        extra_text = await exit_reports.build_do_cumulative_report(
+            project=settings.do_sheet_name,
+        )
+        await send_report_text(bot, settings, extra_text)
         logger.info("Scheduled exit report sent")
     except SheetsError:
         logger.exception("Scheduled exit report: failed to load sheet")
