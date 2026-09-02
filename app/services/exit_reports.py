@@ -67,14 +67,18 @@ class ExitReportsService:
 
         for project in resolved:
             plan = self._storage.get_exit_plan(report_day, project)
+            if plan is None:
+                # JSON мог потеряться после рестарта — пересчитываем план за тот день
+                plan = await self._count_exits_for_project(project, report_day)
             rows = await self._rows_with_exit_on(project, report_day)
-            completed = sum(1 for row in rows if _normalize_status(row.smr_status) == _STATUS_COMPLETED)
-            final = sum(1 for row in rows if _normalize_status(row.smr_status) == _STATUS_FINAL)
-            fact = completed + final
+            completed = sum(1 for row in rows if _is_completed_status(row.smr_status))
+            final = sum(1 for row in rows if _is_final_status(row.smr_status))
+            # Факт = все выходы за день; «из них» — разбивка по статусам СМР
+            fact = len(rows)
             lines.extend(
                 [
                     project,
-                    f"- Утренний план был: {plan if plan is not None else 0}",
+                    f"- Утренний план был: {plan}",
                     f"- Факт: {fact}",
                     "- Из них:",
                     f"    - Выполнен: {completed}",
@@ -107,8 +111,7 @@ class ExitReportsService:
                 continue
             seen.add(row.name)
             total += 1
-            status = _normalize_status(row.smr_status)
-            if status in (_STATUS_COMPLETED, _STATUS_FINAL):
+            if _is_completed_status(row.smr_status) or _is_final_status(row.smr_status):
                 done += 1
 
         remaining = total - done
@@ -215,3 +218,13 @@ def _row_mount_date(row: ProjectExitRow) -> date | None:
 
 def _normalize_status(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
+
+
+def _is_completed_status(value: str) -> bool:
+    status = _normalize_status(value)
+    return status == _STATUS_COMPLETED or status.startswith(f"{_STATUS_COMPLETED} ")
+
+
+def _is_final_status(value: str) -> bool:
+    status = _normalize_status(value)
+    return status == _STATUS_FINAL or status.startswith(f"{_STATUS_FINAL} ")

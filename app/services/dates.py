@@ -18,6 +18,11 @@ def parse_ru_date(value: str) -> date | None:
     raw = (value or "").strip()
     if not raw:
         return None
+    # Google Sheets иногда отдаёт дату со временем: «01.09.2026 0:00:00»
+    if " " in raw:
+        raw = raw.split(" ", 1)[0].strip()
+    if "T" in raw:
+        raw = raw.split("T", 1)[0].strip()
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(raw, fmt).date()

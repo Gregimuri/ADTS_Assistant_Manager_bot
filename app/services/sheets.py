@@ -476,21 +476,36 @@ def _parse_project_csv(text: str, project: str) -> list[ProjectStore]:
 
 
 _SMR_STATUS_HEADERS = (
+    "статус смр текущий",
     "статус смр",
     "статус cmr",
     "статус crm",
     "статус сервиса",
-    "статус смр текущий",
 )
 
 
 def _find_smr_status_header(headers: list[str]) -> str | None:
-    normalized = {header: _normalize_header(header) for header in headers}
+    normalized = [(header, _normalize_header(header)) for header in headers if header]
     for target in _SMR_STATUS_HEADERS:
-        for original, norm in normalized.items():
+        for original, norm in normalized:
             if norm == target:
                 return original
-    return None
+    # На листе ДО есть «Статус СМР ТЕКУЩИЙ» / «Статус СМР СТАРЫЙ» —
+    # берём текущий, иначе любой статус СМР/сервиса без «старый».
+    preferred: str | None = None
+    fallback: str | None = None
+    for original, norm in normalized:
+        if "старый" in norm:
+            continue
+        if "статус смр" in norm or "статус cmr" in norm or "статус crm" in norm:
+            if "текущ" in norm:
+                return original
+            if preferred is None:
+                preferred = original
+        elif norm == "статус сервиса" or norm.startswith("статус сервиса "):
+            if fallback is None:
+                fallback = original
+    return preferred or fallback
 
 
 def _parse_project_rows_csv(text: str, project: str) -> list[ProjectRow]:
