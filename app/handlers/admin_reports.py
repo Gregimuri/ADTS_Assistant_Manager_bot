@@ -88,13 +88,20 @@ async def _preview_report(
     state: FSMContext,
     settings: Settings,
     text: str,
+    *,
+    extra_text: str | None = None,
 ) -> None:
     await answer_text(message, text)
+    if extra_text:
+        await answer_text(message, extra_text)
     await state.set_state(BotStates.waiting_admin_report_confirm)
-    await state.update_data(
-        admin_report_text=text,
-        admin_report_user_id=_user_id(message),
-    )
+    state_data: dict[str, object] = {
+        "admin_report_text": text,
+        "admin_report_user_id": _user_id(message),
+    }
+    if extra_text:
+        state_data["admin_report_extra_text"] = extra_text
+    await state.update_data(**state_data)
     await answer_text(
         message,
         MSG_ADMIN_CONFIRM,
@@ -167,6 +174,9 @@ async def _build_and_preview_exit_report(
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     try:
         text = await exit_reports.build_exit_report(projects)
+        extra_text = await exit_reports.build_do_cumulative_report(
+            project=settings.do_sheet_name,
+        )
     except ValueError as exc:
         await answer_text(
             message,
@@ -194,7 +204,7 @@ async def _build_and_preview_exit_report(
         )
         return
     await state.clear()
-    await _preview_report(message, state, settings, text)
+    await _preview_report(message, state, settings, text, extra_text=extra_text)
 
 
 async def _build_and_preview_assembly(
@@ -595,9 +605,12 @@ async def confirm_admin_send(
         return
 
     text = data.get("admin_report_text", "")
+    extra_text = data.get("admin_report_extra_text")
     await state.clear()
     try:
         await send_report_text(bot, settings, text)
+        if extra_text:
+            await send_report_text(bot, settings, extra_text)
     except Exception:
         logger.exception("Failed to send admin report after confirmation")
         await answer_text(
