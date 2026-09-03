@@ -20,16 +20,19 @@ from app.handlers import (
     do_report_router,
     emm_invoice_router,
     info_tt_router,
+    mention_all_router,
     menu_router,
     region_transfer_router,
     start_router,
     to_invoice_router,
 )
+from app.handlers.mention_all import GroupMemberTrackerMiddleware
 from app.services.admin_report_scheduler import run_admin_report_scheduler
 from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
 from app.services.exit_reports import ExitReportsService
+from app.services.group_members import GroupMemberStore
 from app.services.region_transfer import RegionTransferService
 from app.services.report_storage import ReportStorage
 from app.services.sheets import SheetsClient
@@ -37,6 +40,7 @@ from app.services.sheets import SheetsClient
 logger = logging.getLogger(__name__)
 
 WEBHOOK_PATH = "/webhook"
+ALLOWED_UPDATES = ["message", "edited_message", "callback_query", "chat_member"]
 
 BOT_COMMANDS = [
     BotCommand(command="start", description="Меню и справка"),
@@ -60,7 +64,7 @@ async def _start_polling(bot: Bot, dp: Dispatcher) -> None:
     await dp.start_polling(
         bot,
         drop_pending_updates=True,
-        allowed_updates=["message", "edited_message", "callback_query"],
+        allowed_updates=ALLOWED_UPDATES,
     )
 
 
@@ -83,10 +87,13 @@ def _build_dispatcher(
     region_transfer: RegionTransferService,
     exit_reports: ExitReportsService,
     assembly_reports: AssemblyReportsService,
+    group_members: GroupMemberStore,
     settings: Settings,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
+    dp.message.middleware(GroupMemberTrackerMiddleware(group_members))
     dp.include_routers(
+        mention_all_router,
         start_router,
         admin_reports_router,
         do_report_router,
@@ -102,6 +109,7 @@ def _build_dispatcher(
         region_transfer=region_transfer,
         exit_reports=exit_reports,
         assembly_reports=assembly_reports,
+        group_members=group_members,
     )
     return dp
 
@@ -131,7 +139,7 @@ async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
                 webhook_url,
                 secret_token=secret,
                 drop_pending_updates=True,
-                allowed_updates=["message", "edited_message", "callback_query"],
+                allowed_updates=ALLOWED_UPDATES,
             )
             logger.info("Webhook set to %s", webhook_url)
 
@@ -164,12 +172,14 @@ async def run() -> None:
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)
     assembly_reports = AssemblyReportsService(settings)
+    group_members = GroupMemberStore(Path(settings.group_members_path))
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(
         catalog,
         region_transfer,
         exit_reports,
         assembly_reports,
+        group_members,
         settings,
     )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
