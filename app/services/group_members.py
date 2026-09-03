@@ -106,6 +106,9 @@ class GroupMemberStore:
 
 def format_mention(member: GroupMember) -> str:
     name = html.escape(member.full_name or f"id{member.user_id}")
+    # @username надёжнее доставляет уведомление; без username — deep-link по id
+    if member.username:
+        return f"@{html.escape(member.username)}"
     return f'<a href="tg://user?id={member.user_id}">{name}</a>'
 
 

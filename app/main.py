@@ -46,6 +46,7 @@ BOT_COMMANDS = [
     BotCommand(command="start", description="Меню и справка"),
     BotCommand(command="help", description="Как пользоваться ботом"),
     BotCommand(command="menu", description="Показать кнопки меню"),
+    BotCommand(command="all", description="Пинг всех участников группы"),
 ]
 
 
