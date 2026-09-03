@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
+from aiogram.filters import Command
 from aiogram.types import ChatMemberUpdated, Message, TelegramObject, User
 
 from app.chat_utils import is_group_chat
@@ -15,7 +16,12 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="mention_all")
 
-_ALL_RE = re.compile(r"(?<![\w@])@all(?!\w)", re.IGNORECASE)
+# @all / @все / /all — с невидимыми символами и без учёта регистра
+_ALL_RE = re.compile(
+    r"(?<![\w@])@\s*(?:all|все)(?!\w)",
+    re.IGNORECASE,
+)
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u2060"), None)
 _ACTIVE_STATUSES = {
     ChatMemberStatus.CREATOR,
     ChatMemberStatus.ADMINISTRATOR,
@@ -34,27 +40,42 @@ def _user_full_name(user: User) -> str:
     return f"id{user.id}"
 
 
+def _normalize_trigger_text(value: str) -> str:
+    return (value or "").translate(_INVISIBLE).replace("\xa0", " ").strip()
+
+
 async def _remember_user(store: GroupMemberStore, chat_id: int, user: User | None) -> None:
     if user is None or user.is_bot:
         return
-    await store.remember(
-        chat_id,
-        user_id=user.id,
-        full_name=_user_full_name(user),
-        username=user.username or "",
-        is_bot=False,
-    )
+    try:
+        await store.remember(
+            chat_id,
+            user_id=user.id,
+            full_name=_user_full_name(user),
+            username=user.username or "",
+            is_bot=False,
+        )
+    except Exception:
+        logger.exception("Failed to remember user_id=%s in chat_id=%s", user.id, chat_id)
 
 
 def message_has_all_mention(message: Message) -> bool:
-    text = message.text or message.caption or ""
+    raw = message.text or message.caption or ""
+    text = _normalize_trigger_text(raw)
     if _ALL_RE.search(text):
         return True
     for entity in message.entities or message.caption_entities or []:
-        if entity.type == "mention":
-            fragment = text[entity.offset : entity.offset + entity.length]
-            if fragment.casefold() == "@all":
-                return True
+        if entity.type != "mention":
+            continue
+        # offset в UTF-16 code units относительно исходного текста Telegram
+        utf16 = raw.encode("utf-16-le")
+        start = entity.offset * 2
+        end = (entity.offset + entity.length) * 2
+        if start < 0 or end > len(utf16):
+            continue
+        fragment = _normalize_trigger_text(utf16[start:end].decode("utf-16-le"))
+        if fragment.casefold() in {"@all", "@все"}:
+            return True
     return False
 
 
@@ -68,14 +89,17 @@ class GroupMemberTrackerMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        if isinstance(event, Message) and is_group_chat(event):
-            await _remember_user(self._store, event.chat.id, event.from_user)
-            if event.reply_to_message and event.reply_to_message.from_user:
-                await _remember_user(
-                    self._store,
-                    event.chat.id,
-                    event.reply_to_message.from_user,
-                )
+        try:
+            if isinstance(event, Message) and is_group_chat(event):
+                await _remember_user(self._store, event.chat.id, event.from_user)
+                if event.reply_to_message and event.reply_to_message.from_user:
+                    await _remember_user(
+                        self._store,
+                        event.chat.id,
+                        event.reply_to_message.from_user,
+                    )
+        except Exception:
+            logger.exception("Group member tracker middleware failed")
         return await handler(event, data)
 
 
@@ -92,23 +116,29 @@ async def track_chat_member(
         await _remember_user(group_members, event.chat.id, user)
         return
     if status in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}:
-        await group_members.remove(event.chat.id, user.id)
+        try:
+            await group_members.remove(event.chat.id, user.id)
+        except Exception:
+            logger.exception("Failed to remove user_id=%s from chat_id=%s", user.id, event.chat.id)
 
 
-@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), F.func(message_has_all_mention))
-async def handle_all_mention(
-    message: Message,
+async def _collect_members(
     bot: Bot,
     group_members: GroupMemberStore,
-) -> None:
-    chat_id = message.chat.id
-    await _remember_user(group_members, chat_id, message.from_user)
+    chat_id: int,
+    *,
+    also_remember: User | None = None,
+) -> list[GroupMember]:
+    await _remember_user(group_members, chat_id, also_remember)
 
     by_id: dict[int, GroupMember] = {}
-    for member in await group_members.list_members(chat_id):
-        if member.is_bot:
-            continue
-        by_id[member.user_id] = member
+    try:
+        for member in await group_members.list_members(chat_id):
+            if member.is_bot:
+                continue
+            by_id[member.user_id] = member
+    except Exception:
+        logger.exception("Failed to list stored members for chat_id=%s", chat_id)
 
     try:
         administrators = await bot.get_chat_administrators(chat_id)
@@ -129,19 +159,62 @@ async def handle_all_mention(
         )
         await _remember_user(group_members, chat_id, user)
 
-    if message.from_user and not message.from_user.is_bot:
-        by_id.pop(message.from_user.id, None)
     by_id.pop(me.id, None)
+    return sorted(by_id.values(), key=lambda item: item.full_name.casefold())
 
-    members = sorted(by_id.values(), key=lambda item: item.full_name.casefold())
-    if not members:
-        await message.reply(
-            "Пока некого пинговать: бот ещё не видел участников этой группы.\n"
-            "Пусть люди напишут в чат (или сделайте бота админом) — и повторите @all.",
-        )
+
+async def _reply_all_mentions(
+    message: Message,
+    bot: Bot,
+    group_members: GroupMemberStore,
+) -> None:
+    if not is_group_chat(message):
+        await message.answer("Команда @all /all работает только в группах.")
         return
 
-    chunks = chunk_mentions(members)
-    for index, chunk in enumerate(chunks):
-        text = f"🔔 {chunk}" if index == 0 else chunk
-        await message.reply(text, parse_mode=ParseMode.HTML)
+    try:
+        members = await _collect_members(
+            bot,
+            group_members,
+            message.chat.id,
+            also_remember=message.from_user,
+        )
+        if not members:
+            await message.reply(
+                "Пока некого пинговать: бот ещё не видел участников этой группы.\n\n"
+                "Что сделать:\n"
+                "1) Сделайте бота администратором группы\n"
+                "2) В @BotFather отключите Privacy Mode (/setprivacy → Disable)\n"
+                "3) Пусть участники напишут что-нибудь в чат\n"
+                "4) Повторите /all или @all",
+            )
+            return
+
+        chunks = chunk_mentions(members)
+        for index, chunk in enumerate(chunks):
+            text = f"🔔 Все ({len(members)}): {chunk}" if index == 0 else chunk
+            await message.reply(text, parse_mode=ParseMode.HTML)
+    except Exception:
+        logger.exception("Failed to handle @all in chat_id=%s", message.chat.id)
+        await message.reply("Не удалось собрать упоминания. Проверьте, что бот админ группы.")
+
+
+@router.message(Command("all"))
+async def handle_all_command(
+    message: Message,
+    bot: Bot,
+    group_members: GroupMemberStore,
+) -> None:
+    await _reply_all_mentions(message, bot, group_members)
+
+
+@router.message(
+    F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP, "group", "supergroup"}),
+    F.func(message_has_all_mention),
+)
+async def handle_all_mention(
+    message: Message,
+    bot: Bot,
+    group_members: GroupMemberStore,
+) -> None:
+    await _reply_all_mentions(message, bot, group_members)
