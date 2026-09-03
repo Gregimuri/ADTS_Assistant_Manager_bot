@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     bitrix_assembly_responsible_id: int = 197
     bitrix_assembly_creator_id: int = 439
     report_data_path: str = "data/reports.json"
+    group_members_path: str = "data/group_members.json"
     scheduled_exit_projects: str = "ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО"
     do_order_horizon_days: int = 17
     do_moscow_order_horizon_days: int = 2
