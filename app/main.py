@@ -19,6 +19,7 @@ from app.handlers import (
     admin_reports_router,
     do_report_router,
     emm_invoice_router,
+    group_tracker_router,
     info_tt_router,
     mention_all_router,
     menu_router,
@@ -92,7 +93,10 @@ def _build_dispatcher(
     settings: Settings,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
-    dp.message.middleware(GroupMemberTrackerMiddleware(group_members))
+    # outer_middleware — на КАЖДОЕ сообщение в группе, даже без подходящего handler
+    tracker = GroupMemberTrackerMiddleware(group_members)
+    dp.message.outer_middleware(tracker)
+    dp.edited_message.outer_middleware(tracker)
     dp.include_routers(
         mention_all_router,
         start_router,
@@ -103,6 +107,7 @@ def _build_dispatcher(
         emm_invoice_router,
         to_invoice_router,
         info_tt_router,
+        group_tracker_router,  # последним: запоминает обычные сообщения в группах
     )
     dp.workflow_data.update(
         catalog=catalog,
