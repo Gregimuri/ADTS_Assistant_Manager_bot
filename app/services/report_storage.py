@@ -29,6 +29,34 @@ class ReportStorage:
             return None
         return int(day_data[project])
 
+    async def save_assembly_snapshot(
+        self,
+        day: date,
+        *,
+        open_count: int,
+        task_ids: list[str],
+    ) -> None:
+        async with self._lock:
+            data = self._read()
+            snapshots = data.setdefault("assembly_snapshots", {})
+            snapshots[day.isoformat()] = {
+                "open_count": int(open_count),
+                "task_ids": [str(task_id) for task_id in task_ids],
+            }
+            self._write(data)
+            logger.info(
+                "Saved assembly snapshot for %s (%s open tasks)",
+                day.isoformat(),
+                open_count,
+            )
+
+    def get_assembly_snapshot(self, day: date) -> dict | None:
+        data = self._read()
+        snapshot = data.get("assembly_snapshots", {}).get(day.isoformat())
+        if not isinstance(snapshot, dict):
+            return None
+        return snapshot
+
     def _read(self) -> dict:
         if not self._path.exists():
             return {}

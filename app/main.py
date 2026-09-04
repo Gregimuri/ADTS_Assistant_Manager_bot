@@ -172,7 +172,7 @@ async def run() -> None:
     region_transfer = RegionTransferService(sheets)
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)
-    assembly_reports = AssemblyReportsService(settings)
+    assembly_reports = AssemblyReportsService(settings, report_storage)
     group_members = GroupMemberStore(Path(settings.group_members_path))
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(
