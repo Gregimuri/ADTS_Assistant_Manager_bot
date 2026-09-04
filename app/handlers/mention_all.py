@@ -141,16 +141,6 @@ async def track_chat_member(
             logger.exception("Failed to remove user_id=%s from chat_id=%s", user.id, event.chat.id)
 
 
-async def _bot_is_admin(bot: Bot, chat_id: int) -> bool:
-    try:
-        me = await bot.get_me()
-        member = await bot.get_chat_member(chat_id, me.id)
-        return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
-    except Exception:
-        logger.exception("Failed to check bot admin status in chat_id=%s", chat_id)
-        return False
-
-
 async def _collect_members(
     bot: Bot,
     group_members: GroupMemberStore,
@@ -221,24 +211,8 @@ async def _reply_all_mentions(
             return
 
         chunks = chunk_mentions(members)
-        note = ""
-        try:
-            total = await bot.get_chat_member_count(message.chat.id)
-            # total включает ботов; если известных сильно меньше — Privacy Mode / нет прав
-            if total > len(members) + 2 and not await _bot_is_admin(bot, message.chat.id):
-                note = (
-                    "\n\n⚠️ Вижу не всех участников. Сделайте бота админом "
-                    "или отключите Privacy Mode в @BotFather — тогда обычные "
-                    "сообщения тоже будут запоминаться."
-                )
-        except Exception:
-            logger.exception("Failed to compare member counts for chat_id=%s", message.chat.id)
-
         for index, chunk in enumerate(chunks):
-            if index == 0:
-                text = f"🔔 Все ({len(members)}): {chunk}{note}"
-            else:
-                text = chunk
+            text = f"🔔 Все ({len(members)}): {chunk}" if index == 0 else chunk
             await message.reply(text, parse_mode=ParseMode.HTML)
     except Exception:
         logger.exception("Failed to handle @all in chat_id=%s", message.chat.id)
