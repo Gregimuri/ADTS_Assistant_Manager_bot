@@ -52,31 +52,13 @@ def normalize_header(value: str) -> str:
     return " ".join(value.strip().lower().replace("_", " ").split())
 
 
-_EXIT_DATE_SKIP_HEADERS = frozenset(
-    {
-        "дата заказа",
-        "дата создания",
-        "дата добавления",
-        "дата изменения",
-        "дата подачи света",
-        "дата в таблице магнит",
-        "дата отправки фо",
-    }
-)
-_EXIT_DATE_KEYWORDS = (
-    "выход",
-    "скс",
-    "обслед",
-    "сервис",
-    "монтаж",
-    "выезд",
-    "повтор",
-    "смр",
-)
-
-
 def resolve_exit_date_headers(project: str, headers: list[str]) -> list[str]:
+    """Только колонки из PROJECT_EXIT_DATE_COLUMNS — без keyword-fallback."""
     configured = _CONFIG_BY_PROJECT.get(project.casefold(), ())
+    if not configured:
+        logger.warning("Exit date columns are not configured for project %s", project)
+        return []
+
     by_normalized = {normalize_header(header): header for header in headers if header}
     resolved: list[str] = []
     for column in configured:
@@ -89,21 +71,4 @@ def resolve_exit_date_headers(project: str, headers: list[str]) -> list[str]:
             column,
             project,
         )
-    if resolved:
-        return resolved
-    return _fallback_exit_date_headers(headers)
-
-
-def _fallback_exit_date_headers(headers: list[str]) -> list[str]:
-    result: list[str] = []
-    for header in headers:
-        if not header:
-            continue
-        norm = normalize_header(header)
-        if "дата" not in norm:
-            continue
-        if norm in _EXIT_DATE_SKIP_HEADERS:
-            continue
-        if any(keyword in norm for keyword in _EXIT_DATE_KEYWORDS):
-            result.append(header)
-    return result
+    return resolved
