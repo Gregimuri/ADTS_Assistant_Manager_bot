@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_MENTIONS_PER_MESSAGE = 5
+_MENTIONS_PER_MESSAGE = 40
 
 
 @dataclass(frozen=True, slots=True)
