@@ -19,21 +19,17 @@ from app.handlers import (
     admin_reports_router,
     do_report_router,
     emm_invoice_router,
-    group_tracker_router,
     info_tt_router,
-    mention_all_router,
     menu_router,
     region_transfer_router,
     start_router,
     to_invoice_router,
 )
-from app.handlers.mention_all import GroupMemberTrackerMiddleware
 from app.services.admin_report_scheduler import run_admin_report_scheduler
 from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
 from app.services.exit_reports import ExitReportsService
-from app.services.group_members import GroupMemberStore
 from app.services.region_transfer import RegionTransferService
 from app.services.report_storage import ReportStorage
 from app.services.sheets import SheetsClient
@@ -41,13 +37,12 @@ from app.services.sheets import SheetsClient
 logger = logging.getLogger(__name__)
 
 WEBHOOK_PATH = "/webhook"
-ALLOWED_UPDATES = ["message", "edited_message", "callback_query", "chat_member"]
+ALLOWED_UPDATES = ["message", "edited_message", "callback_query"]
 
 BOT_COMMANDS = [
     BotCommand(command="start", description="Меню и справка"),
     BotCommand(command="help", description="Как пользоваться ботом"),
     BotCommand(command="menu", description="Показать кнопки меню"),
-    BotCommand(command="all", description="Пинг всех участников группы"),
 ]
 
 
@@ -89,16 +84,10 @@ def _build_dispatcher(
     region_transfer: RegionTransferService,
     exit_reports: ExitReportsService,
     assembly_reports: AssemblyReportsService,
-    group_members: GroupMemberStore,
     settings: Settings,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
-    # outer_middleware — на КАЖДОЕ сообщение в группе, даже без подходящего handler
-    tracker = GroupMemberTrackerMiddleware(group_members)
-    dp.message.outer_middleware(tracker)
-    dp.edited_message.outer_middleware(tracker)
     dp.include_routers(
-        mention_all_router,
         start_router,
         admin_reports_router,
         do_report_router,
@@ -107,7 +96,6 @@ def _build_dispatcher(
         emm_invoice_router,
         to_invoice_router,
         info_tt_router,
-        group_tracker_router,  # последним: запоминает обычные сообщения в группах
     )
     dp.workflow_data.update(
         catalog=catalog,
@@ -115,7 +103,6 @@ def _build_dispatcher(
         region_transfer=region_transfer,
         exit_reports=exit_reports,
         assembly_reports=assembly_reports,
-        group_members=group_members,
     )
     return dp
 
@@ -178,15 +165,12 @@ async def run() -> None:
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)
     assembly_reports = AssemblyReportsService(settings, report_storage)
-    group_members = GroupMemberStore(Path(settings.group_members_path), settings)
-    await group_members.hydrate()
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(
         catalog,
         region_transfer,
         exit_reports,
         assembly_reports,
-        group_members,
         settings,
     )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
@@ -209,8 +193,6 @@ async def run() -> None:
             await admin_scheduler_task
         with contextlib.suppress(asyncio.CancelledError):
             await scheduler_task
-        with contextlib.suppress(Exception):
-            await group_members.flush()
         await bot.session.close()
 
 

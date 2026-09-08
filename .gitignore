@@ -14,7 +14,6 @@ build/
 .DS_Store
 Thumbs.db
 data/reports.json
-data/group_members.json
 data/*.tmp
 !data/.gitkeep
 
