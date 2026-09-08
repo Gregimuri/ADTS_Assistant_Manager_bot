@@ -49,10 +49,15 @@ class ExitReportsService:
         all_projects = await self.list_projects()
         counts = await self._count_exits_for_projects(all_projects, today)
         await self._storage.save_exit_plan(today, counts)
+        # Если план уже был зафиксирован ранее — показываем его, а не свежий пересчёт.
+        fixed: dict[str, int] = {}
+        for project in all_projects:
+            stored = self._storage.get_exit_plan(today, project)
+            fixed[project] = counts.get(project, 0) if stored is None else stored
 
         lines = [f"План на день {format_ru_date(today)}:", ""]
         for project in resolved:
-            lines.append(f"{project} - {counts.get(project, 0)}")
+            lines.append(f"{project} - {fixed.get(project, 0)}")
         return "\n".join(lines)
 
     async def build_exit_report(
