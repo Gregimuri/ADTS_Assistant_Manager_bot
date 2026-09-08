@@ -5,3 +5,9 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      # Переживает rebuild/push: участники @all и утренние планы
+      - bot-data:/app/data
+
+volumes:
+  bot-data:

@@ -178,7 +178,8 @@ async def run() -> None:
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)
     assembly_reports = AssemblyReportsService(settings, report_storage)
-    group_members = GroupMemberStore(Path(settings.group_members_path))
+    group_members = GroupMemberStore(Path(settings.group_members_path), settings)
+    await group_members.hydrate()
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(
         catalog,
@@ -208,6 +209,8 @@ async def run() -> None:
             await admin_scheduler_task
         with contextlib.suppress(asyncio.CancelledError):
             await scheduler_task
+        with contextlib.suppress(Exception):
+            await group_members.flush()
         await bot.session.close()
 
 
