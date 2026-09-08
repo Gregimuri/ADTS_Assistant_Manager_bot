@@ -6,7 +6,7 @@ services:
       - .env
     restart: unless-stopped
     volumes:
-      # Переживает rebuild/push: участники @all и утренние планы
+      # Утренние планы выходов и снимки сборки переживают rebuild
       - bot-data:/app/data
 
 volumes:

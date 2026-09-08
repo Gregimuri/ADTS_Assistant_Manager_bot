@@ -38,8 +38,6 @@ services:
         value: "439"
       - key: REPORT_DATA_PATH
         value: data/reports.json
-      - key: GROUP_MEMBERS_PATH
-        value: data/group_members.json
       - key: SCHEDULED_EXIT_PROJECTS
         value: ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО
       - key: DO_ORDER_HORIZON_DAYS
