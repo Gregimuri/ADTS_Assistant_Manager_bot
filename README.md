@@ -122,7 +122,7 @@ python -m app.main
 | `DO_REPORT_USER_IDS` | Кому доступны `#ДО` и кнопка «Отчет ДО расходка» |
 | `ADMIN_REPORT_CHAT_ID` | Группа для админ-отчётов (по умолчанию `-5278414891`) |
 | `BITRIX_WEBHOOK_URL` | Webhook Bitrix24 для отчётов по сборке |
-| `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`) |
+| `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`); дублируется в Bitrix-задачу `[assistant-manager] reports` |
 | `SCHEDULED_EXIT_PROJECTS` | Проекты в автоматическом плане/отчёте выходов (через запятую) |
 | `DO_ORDER_HORIZON_DAYS` | Горизонт заказа для регионов, дней (17) |
 | `DO_MOSCOW_ORDER_HORIZON_DAYS` | Горизонт для Москвы, дней (17) |
