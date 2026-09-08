@@ -67,9 +67,8 @@ class ExitReportsService:
 
         for project in resolved:
             plan = self._storage.get_exit_plan(report_day, project)
-            if plan is None:
-                # JSON мог потеряться после рестарта — пересчитываем план за тот день
-                plan = await self._count_exits_for_project(project, report_day)
+            # Не пересчитываем план из таблицы: к вечеру даты уже меняют.
+            plan_text = "не зафиксирован" if plan is None else str(plan)
             rows = await self._rows_with_exit_on(project, report_day)
             completed = sum(1 for row in rows if _is_completed_status(row.smr_status))
             final = sum(1 for row in rows if _is_final_status(row.smr_status))
@@ -78,7 +77,7 @@ class ExitReportsService:
             lines.extend(
                 [
                     project,
-                    f"- Утренний план был: {plan}",
+                    f"- Утренний план был: {plan_text}",
                     f"- Факт: {fact}",
                     "- Из них:",
                     f"    - Выполнен: {completed}",
