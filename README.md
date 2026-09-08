@@ -123,6 +123,7 @@ python -m app.main
 | `ADMIN_REPORT_CHAT_ID` | Группа для админ-отчётов (по умолчанию `-5278414891`) |
 | `BITRIX_WEBHOOK_URL` | Webhook Bitrix24 для отчётов по сборке |
 | `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`) |
+| `GROUP_MEMBERS_PATH` | Локальный кэш участников для `@all` (`data/group_members.json`; дублируется в Bitrix) |
 | `SCHEDULED_EXIT_PROJECTS` | Проекты в автоматическом плане/отчёте выходов (через запятую) |
 | `DO_ORDER_HORIZON_DAYS` | Горизонт заказа для регионов, дней (17) |
 | `DO_MOSCOW_ORDER_HORIZON_DAYS` | Горизонт для Москвы, дней (17) |
@@ -134,6 +135,9 @@ python -m app.main
 
 ```bash
 docker compose up -d --build
+
+Список участников `@all` хранится в Docker-томе `bot-data` и дополнительно в Bitrix,
+поэтому после пуша/пересборки контейнера пинги не сбрасываются.
 ```
 
 Перед запуском создайте `.env` из `.env.example`.
