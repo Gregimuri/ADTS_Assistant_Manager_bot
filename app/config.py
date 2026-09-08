@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     group_members_path: str = "data/group_members.json"
     scheduled_exit_projects: str = "ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО"
     do_order_horizon_days: int = 17
-    do_moscow_order_horizon_days: int = 7
+    do_moscow_order_horizon_days: int = 17
     sheets_cache_ttl_seconds: int = 600
     price_base: int = 1000
     price_per_unit: int = 500
