@@ -125,7 +125,7 @@ python -m app.main
 | `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`) |
 | `SCHEDULED_EXIT_PROJECTS` | Проекты в автоматическом плане/отчёте выходов (через запятую) |
 | `DO_ORDER_HORIZON_DAYS` | Горизонт заказа для регионов, дней (17) |
-| `DO_MOSCOW_ORDER_HORIZON_DAYS` | Горизонт для Москвы, дней (7) |
+| `DO_MOSCOW_ORDER_HORIZON_DAYS` | Горизонт для Москвы, дней (17) |
 | `PRICE_BASE` / `PRICE_PER_UNIT` | Тариф ЕММ (1000 / 500) |
 
 Полный список — в [`.env.example`](.env.example).
