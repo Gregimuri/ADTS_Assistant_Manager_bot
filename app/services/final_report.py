@@ -27,6 +27,15 @@ FO_PROJECT_GROUPS: dict[str, int] = {
     "ШБ": 197,
 }
 
+# Родительские папки на диске (ссылки /folder/...)
+FO_PROJECT_PARENT_FOLDERS: dict[str, int] = {
+    "ММ": 331645,  # https://adts.bitrix24.ru/folder/SBAuo8TRAs5PB0NjAFS8
+    "ДО": 331645,
+    "МА": 459001,  # https://adts.bitrix24.ru/folder/6aMkgrXAiAeTfpzlLJOj
+    "Лента": 559455,  # https://adts.bitrix24.ru/folder/RWAXhqRIow0NvpXY0QKa
+    "ШБ": 910859,  # https://adts.bitrix24.ru/folder/opcbi4a5u8e2fr883ulZ
+}
+
 FO_PROJECTS = tuple(FO_PROJECT_GROUPS.keys())
 
 _FOLDER_LINK = (
@@ -109,7 +118,7 @@ class FinalReportService:
         group_id = FO_PROJECT_GROUPS[project]
         folder_name = f"{project} {store.name}".strip()
 
-        parent_id = await self._resolve_parent_folder(group_id)
+        parent_id = await self._resolve_parent_folder(project)
         folder = await self._ensure_subfolder(parent_id, folder_name)
         folder_id = str(folder.get("ID") or folder.get("id") or "")
         if not folder_id:
@@ -155,36 +164,27 @@ class FinalReportService:
             project=project,
         )
 
-    async def _resolve_parent_folder(self, group_id: int) -> str:
-        """Корень диска Bitrix-группы проекта."""
+    async def _resolve_parent_folder(self, project: str) -> str:
+        """Папка проекта на диске Bitrix, куда складываются ФО."""
+        parent_id = FO_PROJECT_PARENT_FOLDERS.get(project)
+        if not parent_id:
+            raise FinalReportError(f"Для проекта {project} не задана папка на диске.")
         try:
-            result = await self._call(
-                "disk.storage.getlist",
-                {
-                    "filter": {
-                        "ENTITY_TYPE": "group",
-                        "ENTITY_ID": group_id,
-                    }
-                },
-            )
+            result = await self._call("disk.folder.get", {"id": parent_id})
         except FinalReportError as exc:
-            if "insufficient_scope" in str(exc).casefold() or "disk" in str(exc).casefold():
+            text = str(exc).casefold()
+            if "insufficient_scope" in text or "disk" in text:
                 raise FinalReportError(
                     "У webhook Bitrix нет права Disk. "
                     "Добавьте доступ «Диск» (disk) во входящий webhook и повторите."
                 ) from exc
             raise
-        items = result if isinstance(result, list) else []
-        if not items and isinstance(result, dict):
-            items = result.get("storages") or result.get("result") or []
-        if not isinstance(items, list) or not items:
+        if not isinstance(result, dict):
             raise FinalReportError(
-                f"Не найден диск Bitrix-группы {group_id}. Проверьте права webhook на Disk."
+                f"Не найдена папка проекта {project} на диске Bitrix (id={parent_id})."
             )
-        root_id = str(items[0].get("ROOT_OBJECT_ID") or items[0].get("rootObjectId") or "")
-        if not root_id:
-            raise FinalReportError("У диска группы нет ROOT_OBJECT_ID.")
-        return root_id
+        folder_id = str(result.get("ID") or result.get("id") or parent_id)
+        return folder_id
 
     async def _ensure_subfolder(self, parent_id: str, name: str) -> dict[str, Any]:
         existing = await self._find_child_folder(parent_id, name)
