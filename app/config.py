@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     bitrix_webhook_url: str = "https://adts.bitrix24.ru/rest/227/9hhckruwy6wbutw6/"
     bitrix_assembly_responsible_id: int = 197
     bitrix_assembly_creator_id: int = 439
+    bitrix_fo_responsible_id: int = 281
+    bitrix_fo_fallback_creator_id: int = 401
+    bitrix_fo_auditor_ids: frozenset[int] = frozenset({281, 203, 201, 401})
     report_data_path: str = "data/reports.json"
     scheduled_exit_projects: str = "ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО"
     do_order_horizon_days: int = 17
@@ -45,7 +48,12 @@ class Settings(BaseSettings):
     def public_base_url(self) -> str:
         return self.webhook_base_url.rstrip("/")
 
-    @field_validator("admin_user_ids", "do_report_user_ids", mode="before")
+    @field_validator(
+        "admin_user_ids",
+        "do_report_user_ids",
+        "bitrix_fo_auditor_ids",
+        mode="before",
+    )
     @classmethod
     def _parse_user_ids(cls, value: object) -> frozenset[int]:
         if value is None or value == "":
