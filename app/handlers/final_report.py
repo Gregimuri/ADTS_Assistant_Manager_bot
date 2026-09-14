@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 from io import BytesIO
 
@@ -337,9 +338,20 @@ async def handle_fo_build(
     await bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_DOCUMENT)
 
     async def download_photo(file_id: str) -> bytes:
-        buffer = BytesIO()
-        await bot.download(file_id, destination=buffer)
-        return buffer.getvalue()
+        try:
+            buffer = await bot.download(file_id)
+        except Exception as exc:
+            raise FinalReportError(
+                f"Не удалось скачать фото из Telegram: {exc}"
+            ) from exc
+        if buffer is None:
+            raise FinalReportError("Telegram вернул пустой файл.")
+        if isinstance(buffer, BytesIO):
+            return buffer.getvalue()
+        data = buffer.read()
+        if isinstance(data, bytes):
+            return data
+        raise FinalReportError("Некорректные данные фото из Telegram.")
 
     try:
         result = await final_report.submit(
@@ -352,16 +364,16 @@ async def handle_fo_build(
         logger.exception("FO submit failed")
         await answer_text(
             message,
-            MSG_FO_ERROR.format(error=str(exc)),
+            MSG_FO_ERROR.format(error=html.escape(str(exc))),
             reply_markup=fo_photos_keyboard(),
             parse_mode=ParseMode.HTML,
         )
         return
-    except Exception:
+    except Exception as exc:
         logger.exception("Unexpected FO submit failure")
         await answer_text(
             message,
-            MSG_FO_ERROR.format(error="Неизвестная ошибка. Попробуйте позже."),
+            MSG_FO_ERROR.format(error=html.escape(f"{type(exc).__name__}: {exc}")),
             reply_markup=fo_photos_keyboard(),
             parse_mode=ParseMode.HTML,
         )
@@ -371,13 +383,13 @@ async def handle_fo_build(
     await answer_text(
         message,
         MSG_FO_DONE.format(
-            project=result.project,
-            store=result.store_name,
-            folder=result.folder_name,
+            project=html.escape(result.project),
+            store=html.escape(result.store_name),
+            folder=html.escape(result.folder_name),
             photos=result.photos_uploaded,
-            creator=result.creator_name,
-            folder_url=result.folder_url,
-            task_url=result.task_url,
+            creator=html.escape(result.creator_name),
+            folder_url=html.escape(result.folder_url),
+            task_url=html.escape(result.task_url),
         ),
         reply_markup=keyboard_for_message(settings, message),
         parse_mode=ParseMode.HTML,

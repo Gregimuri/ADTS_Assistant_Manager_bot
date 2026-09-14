@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -126,11 +127,25 @@ class FinalReportService:
 
         uploaded = 0
         for index, photo in enumerate(photos, start=1):
-            content: bytes = await download_photo(photo.file_id)
+            try:
+                content = await download_photo(photo.file_id)
+            except FinalReportError:
+                raise
+            except Exception as exc:
+                raise FinalReportError(
+                    f"Не удалось скачать фото №{index} из Telegram: {exc}"
+                ) from exc
             if not content:
                 continue
             filename = photo.filename or f"photo_{index}.jpg"
-            await self._upload_file(folder_id, filename, content)
+            try:
+                await self._upload_file(folder_id, filename, content)
+            except FinalReportError:
+                raise
+            except Exception as exc:
+                raise FinalReportError(
+                    f"Не удалось загрузить фото №{index} на диск Bitrix: {exc}"
+                ) from exc
             uploaded += 1
         if uploaded == 0:
             raise FinalReportError("Не удалось скачать фото из Telegram.")
@@ -173,7 +188,7 @@ class FinalReportService:
             result = await self._call("disk.folder.get", {"id": parent_id})
         except FinalReportError as exc:
             text = str(exc).casefold()
-            if "insufficient_scope" in text or "disk" in text:
+            if "insufficient_scope" in text:
                 raise FinalReportError(
                     "У webhook Bitrix нет права Disk. "
                     "Добавьте доступ «Диск» (disk) во входящий webhook и повторите."
@@ -183,7 +198,14 @@ class FinalReportService:
             raise FinalReportError(
                 f"Не найдена папка проекта {project} на диске Bitrix (id={parent_id})."
             )
-        folder_id = str(result.get("ID") or result.get("id") or parent_id)
+        # Ссылки /folder/... могут указывать на ярлык — пишем в реальный объект.
+        folder_id = str(
+            result.get("REAL_OBJECT_ID")
+            or result.get("realObjectId")
+            or result.get("ID")
+            or result.get("id")
+            or parent_id
+        )
         return folder_id
 
     async def _ensure_subfolder(self, parent_id: str, name: str) -> dict[str, Any]:
@@ -237,15 +259,55 @@ class FinalReportService:
 
     async def _upload_file(self, folder_id: str, filename: str, content: bytes) -> None:
         safe_name = _safe_filename(filename)
-        payload = base64.b64encode(content).decode("ascii")
-        await self._call(
+        # Надёжный способ: получить UploadUrl и отправить multipart (без base64 в JSON).
+        upload_info = await self._call(
             "disk.folder.uploadfile",
             {
                 "id": folder_id,
                 "data": {"NAME": safe_name},
-                "fileContent": [safe_name, payload],
+                "generateUniqueName": True,
             },
         )
+        if not isinstance(upload_info, dict):
+            raise FinalReportError("Bitrix не вернул URL для загрузки файла.")
+        upload_url = str(upload_info.get("uploadUrl") or upload_info.get("UPLOAD_URL") or "")
+        field = str(upload_info.get("field") or upload_info.get("FIELD") or "file")
+        if not upload_url:
+            # fallback: старый способ через base64
+            payload = base64.b64encode(content).decode("ascii")
+            await self._call(
+                "disk.folder.uploadfile",
+                {
+                    "id": folder_id,
+                    "data": {"NAME": safe_name},
+                    "fileContent": [safe_name, payload],
+                    "generateUniqueName": True,
+                },
+            )
+            return
+        timeout = aiohttp.ClientTimeout(total=180)
+        form = aiohttp.FormData()
+        form.add_field(
+            field,
+            content,
+            filename=safe_name,
+            content_type="application/octet-stream",
+        )
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(upload_url, data=form) as response:
+                body = await response.text()
+                if response.status >= 400:
+                    raise FinalReportError(
+                        f"Не удалось загрузить фото на диск Bitrix (HTTP {response.status})."
+                    )
+                try:
+                    data = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    data = {}
+                if isinstance(data, dict) and data.get("error"):
+                    raise FinalReportError(
+                        f"Bitrix API: {data.get('error_description') or data.get('error')}"
+                    )
 
     async def _resolve_creator(self, manager_name: str) -> tuple[int, str]:
         fallback_id = self._settings.bitrix_fo_fallback_creator_id
@@ -326,10 +388,26 @@ class FinalReportService:
     async def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         url = urljoin(self._base_url, method)
         timeout = aiohttp.ClientTimeout(total=120)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=params or {}) as response:
-                response.raise_for_status()
-                data = await response.json(content_type=None)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=params or {}) as response:
+                    body = await response.text()
+                    try:
+                        data = json.loads(body) if body else {}
+                    except json.JSONDecodeError as exc:
+                        raise FinalReportError(
+                            f"Bitrix вернул не-JSON ответ (HTTP {response.status})."
+                        ) from exc
+                    if response.status >= 400 and not (
+                        isinstance(data, dict) and data.get("error")
+                    ):
+                        raise FinalReportError(
+                            f"Bitrix HTTP {response.status}: {body[:300]}"
+                        )
+        except FinalReportError:
+            raise
+        except aiohttp.ClientError as exc:
+            raise FinalReportError(f"Сеть Bitrix: {exc}") from exc
         if not isinstance(data, dict):
             raise FinalReportError("Bitrix вернул неожиданный ответ.")
         if data.get("error"):
