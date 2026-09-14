@@ -19,6 +19,7 @@ from app.handlers import (
     admin_reports_router,
     do_report_router,
     emm_invoice_router,
+    final_report_router,
     info_tt_router,
     menu_router,
     region_transfer_router,
@@ -30,6 +31,7 @@ from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
 from app.services.exit_reports import ExitReportsService
+from app.services.final_report import FinalReportService
 from app.services.region_transfer import RegionTransferService
 from app.services.report_storage import ReportStorage
 from app.services.sheets import SheetsClient
@@ -84,6 +86,7 @@ def _build_dispatcher(
     region_transfer: RegionTransferService,
     exit_reports: ExitReportsService,
     assembly_reports: AssemblyReportsService,
+    final_report: FinalReportService,
     settings: Settings,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
@@ -92,6 +95,7 @@ def _build_dispatcher(
         admin_reports_router,
         do_report_router,
         region_transfer_router,
+        final_report_router,
         menu_router,
         emm_invoice_router,
         to_invoice_router,
@@ -103,6 +107,7 @@ def _build_dispatcher(
         region_transfer=region_transfer,
         exit_reports=exit_reports,
         assembly_reports=assembly_reports,
+        final_report=final_report,
     )
     return dp
 
@@ -165,12 +170,14 @@ async def run() -> None:
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)
     assembly_reports = AssemblyReportsService(settings, report_storage)
+    final_report = FinalReportService(settings, catalog)
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(
         catalog,
         region_transfer,
         exit_reports,
         assembly_reports,
+        final_report,
         settings,
     )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))

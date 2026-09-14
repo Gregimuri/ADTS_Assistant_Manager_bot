@@ -4,6 +4,8 @@ BTN_EMM = "Счёт ЕММ"
 BTN_TO = "Счёт ТО"
 BTN_INFO = "Инфо ТТ"
 BTN_REGIONS = "Передать регионы"
+BTN_FO = "Сдать ФО"
+BTN_FO_BUILD = "Сформировать отчет"
 BTN_DO = "Отчет ДО расходка"
 BTN_EXIT_PLAN = "План кол-во выходов"
 BTN_EXIT_REPORT = "Отчет кол-во выходов"
@@ -27,13 +29,14 @@ MAIN_BUTTONS = {
     BTN_TO,
     BTN_INFO,
     BTN_REGIONS,
+    BTN_FO,
     BTN_DO,
     BTN_HELP,
     BTN_MENU,
     *ADMIN_BUTTONS,
 }
 CANCEL_BUTTONS = {BTN_CANCEL, BTN_MENU, BTN_BACK}
-FLOW_BUTTONS = MAIN_BUTTONS | {BTN_DONE, BTN_DO_SEND, BTN_BACK}
+FLOW_BUTTONS = MAIN_BUTTONS | {BTN_DONE, BTN_DO_SEND, BTN_BACK, BTN_FO_BUILD}
 
 
 def do_confirm_keyboard() -> ReplyKeyboardMarkup:
@@ -49,6 +52,7 @@ def main_keyboard(*, show_do: bool = False, show_admin: bool = False) -> ReplyKe
     keyboard: list[list[KeyboardButton]] = [
         [KeyboardButton(text=BTN_EMM), KeyboardButton(text=BTN_TO)],
         [KeyboardButton(text=BTN_INFO), KeyboardButton(text=BTN_REGIONS)],
+        [KeyboardButton(text=BTN_FO)],
     ]
     if show_do:
         keyboard.append([KeyboardButton(text=BTN_DO)])
@@ -79,6 +83,30 @@ def projects_keyboard(options: list[str]) -> ReplyKeyboardMarkup:
         rows.append(row)
     rows.append([KeyboardButton(text=BTN_DONE), KeyboardButton(text=BTN_CANCEL)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def fo_projects_keyboard(options: list[str]) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    row: list[KeyboardButton] = []
+    for option in options:
+        row.append(KeyboardButton(text=option))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([KeyboardButton(text=BTN_CANCEL), KeyboardButton(text=BTN_MENU)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def fo_photos_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_FO_BUILD)],
+            [KeyboardButton(text=BTN_CANCEL), KeyboardButton(text=BTN_MENU)],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def cancel_keyboard() -> ReplyKeyboardMarkup:
