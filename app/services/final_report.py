@@ -149,7 +149,6 @@ class FinalReportService:
             raise FinalReportError("Не удалось скачать фото из Telegram.")
 
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
-        creator_id = self._settings.bitrix_fo_fallback_creator_id
         creator_name = "Титков Григорий"
         deadline = _deadline_tomorrow()
         description = f"Ссылка на диск: {folder_url}"
@@ -157,7 +156,6 @@ class FinalReportService:
             title=f'Финальный отчет - "{store.name}"',
             description=description,
             responsible_id=self._settings.bitrix_fo_responsible_id,
-            creator_id=creator_id,
             auditor_ids=sorted(self._settings.bitrix_fo_auditor_ids),
             group_id=group_id,
             deadline=deadline,
@@ -314,26 +312,27 @@ class FinalReportService:
         title: str,
         description: str,
         responsible_id: int,
-        creator_id: int,
         auditor_ids: list[int],
         group_id: int,
         deadline: str,
     ) -> dict[str, Any]:
+        # tasks.task.add — JSON-тело (как n8n); CREATED_BY не передаём — постановщик = владелец webhook.
+        fields: dict[str, Any] = {
+            "TITLE": title,
+            "DESCRIPTION": description,
+            "DESCRIPTION_IN_BBCODE": "N",
+            "RESPONSIBLE_ID": responsible_id,
+            "GROUP_ID": group_id,
+            "DEADLINE": deadline,
+            "PRIORITY": 1,
+        }
+        auditors = [user_id for user_id in auditor_ids if user_id != responsible_id]
+        if auditors:
+            fields["AUDITORS"] = auditors
         result = await self._call(
             "tasks.task.add",
-            {
-                "fields": {
-                    "TITLE": title,
-                    "DESCRIPTION": description,
-                    "DESCRIPTION_IN_BBCODE": "N",
-                    "RESPONSIBLE_ID": responsible_id,
-                    "CREATED_BY": creator_id,
-                    "AUDITORS": auditor_ids,
-                    "GROUP_ID": group_id,
-                    "DEADLINE": deadline,
-                    "PRIORITY": "1",
-                }
-            },
+            {"fields": fields},
+            json_body=True,
         )
         if isinstance(result, dict):
             task = result.get("task")
@@ -342,13 +341,20 @@ class FinalReportService:
             return result
         raise FinalReportError("Не удалось создать задачу в Bitrix.")
 
-    async def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    async def _call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        json_body: bool = False,
+    ) -> Any:
         try:
             return await bitrix_call(
                 self._settings,
                 method,
                 params,
                 timeout_seconds=120,
+                json_body=json_body,
             )
         except RuntimeError as exc:
             raise FinalReportError(str(exc)) from exc

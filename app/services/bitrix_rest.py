@@ -48,15 +48,19 @@ async def bitrix_call(
     params: dict[str, Any] | None = None,
     *,
     timeout_seconds: int = 120,
+    json_body: bool = False,
 ) -> Any:
     base = settings.bitrix_webhook_url.rstrip("/") + "/"
     if not settings.bitrix_webhook_url.strip():
         raise RuntimeError("BITRIX_WEBHOOK_URL не задан.")
     url = urljoin(base, method)
-    payload = flatten_params(params or {})
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, data=payload) as response:
+        if json_body:
+            request = session.post(url, json=params or {})
+        else:
+            request = session.post(url, data=flatten_params(params or {}))
+        async with request as response:
             body = await response.text()
             try:
                 data = json.loads(body) if body else {}
@@ -71,6 +75,9 @@ async def bitrix_call(
     if not isinstance(data, dict):
         raise RuntimeError("Bitrix вернул неожиданный ответ.")
     if data.get("error"):
-        description = str(data.get("error_description") or data.get("error"))
+        code = str(data.get("error") or "")
+        description = str(data.get("error_description") or code)
+        if code and code not in description:
+            description = f"{description} ({code})"
         raise RuntimeError(f"Bitrix API: {description}")
     return data.get("result")
