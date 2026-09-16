@@ -112,12 +112,10 @@ class Catalog:
         return result
 
     async def find_emm_bitrix_task(self, query: str) -> str:
-        """Ссылка на задачу Bitrix для ЕММ: лист ТО или поиск в Bitrix."""
+        """Ссылка на задачу Bitrix для ЕММ: колонка «Задача Bitrix» на листе ТО, иначе Bitrix API."""
         visits = await self._sheets.get_to_visits()
         for visit in visits:
             if not _name_matches(visit.name, query):
-                continue
-            if "емм" not in visit.work_type.casefold():
                 continue
             task_id = parse_bitrix_task_id(visit.bitrix_task_id)
             if task_id:
