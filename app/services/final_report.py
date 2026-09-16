@@ -122,7 +122,7 @@ class FinalReportService:
 
         project = self.resolve_project(project)
         group_id = FO_PROJECT_GROUPS[project]
-        upload_folder_name = _fo_upload_folder_name(store.name)
+        upload_folder_name = _fo_upload_folder_name(project, store.name)
         folder_id = await self._resolve_upload_folder_id(project, store.name)
         if not folder_id:
             raise FinalReportError("Bitrix не вернул ID папки для загрузки ФО.")
@@ -153,15 +153,22 @@ class FinalReportService:
             raise FinalReportError("Не удалось скачать файлы из Telegram.")
 
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
-        creator_id, creator_name = await self._managers.resolve(store.manager)
+        manager_id, manager_name = await self._managers.resolve(store.manager)
+        api_creator_id = self._settings.bitrix_fo_fallback_creator_id
         deadline = _deadline_tomorrow()
-        description = f"Ссылка на диск: {folder_url}"
+        description = (
+            f"Постановщик (менеджер ТТ): {manager_name}\n"
+            f"Ссылка на диск: {folder_url}"
+        )
+        auditor_ids = sorted(set(self._settings.bitrix_fo_auditor_ids))
+        if manager_id != api_creator_id:
+            auditor_ids = sorted(set(auditor_ids) | {manager_id})
         task = await self._create_task(
             title=f'Финальный отчет - "{project} {store.name}"',
             description=description,
             responsible_id=self._settings.bitrix_fo_responsible_id,
-            created_by_id=creator_id,
-            auditor_ids=sorted(self._settings.bitrix_fo_auditor_ids),
+            created_by_id=api_creator_id,
+            auditor_ids=auditor_ids,
             group_id=group_id,
             deadline=deadline,
         )
@@ -176,7 +183,7 @@ class FinalReportService:
             folder_url=folder_url,
             folder_name=upload_folder_name,
             photos_uploaded=uploaded,
-            creator_name=creator_name,
+            creator_name=manager_name,
             store_name=store.name,
             project=project,
         )
@@ -211,24 +218,38 @@ class FinalReportService:
         return folder_id
 
     async def _resolve_upload_folder_id(self, project: str, store_name: str) -> str:
-        """Папка «Финальный ФО …» внутри ТТ или в новой папке с именем ТТ."""
+        """Внутри папки ТТ всегда создаётся/находится «Итоговый фотоотчет …» для загрузки."""
         project_root = await self._resolve_parent_folder(project)
         tt_name = store_name.strip()
-        fo_name = _fo_upload_folder_name(tt_name)
+        fo_name = _fo_upload_folder_name(project, tt_name)
 
-        tt_folder = await self._find_child_folder(project_root, tt_name)
-        if tt_folder is not None:
-            tt_id = str(tt_folder.get("ID") or tt_folder.get("id") or "")
-        else:
-            created = await self._ensure_subfolder(project_root, tt_name)
-            tt_id = str(created.get("ID") or created.get("id") or "")
+        tt_folder = await self._locate_tt_folder(project_root, project, tt_name)
+        if tt_folder is None:
+            tt_folder = await self._ensure_subfolder(project_root, tt_name)
 
+        tt_id = _disk_folder_id(tt_folder)
         if not tt_id:
             raise FinalReportError(f"Не удалось получить папку ТТ «{tt_name}» на диске.")
 
         fo_folder = await self._ensure_subfolder(tt_id, fo_name)
-        fo_id = str(fo_folder.get("ID") or fo_folder.get("id") or "")
+        fo_id = _disk_folder_id(fo_folder)
+        if not fo_id:
+            raise FinalReportError(f"Не удалось создать папку «{fo_name}» внутри ТТ.")
+        logger.info("FO files → %r inside TT %r (id=%s)", fo_name, tt_name, tt_id)
         return fo_id
+
+    async def _locate_tt_folder(
+        self,
+        project_root: str,
+        project: str,
+        tt_name: str,
+    ) -> dict[str, Any] | None:
+        legacy = f"{project} {tt_name}".strip()
+        for candidate in (tt_name, legacy):
+            found = await self._find_child_folder(project_root, candidate)
+            if found is not None:
+                return found
+        return None
 
     async def _ensure_subfolder(self, parent_id: str, name: str) -> dict[str, Any]:
         existing = await self._find_child_folder(parent_id, name)
@@ -387,8 +408,18 @@ class FinalReportService:
             raise FinalReportError(str(exc)) from exc
 
 
-def _fo_upload_folder_name(store_name: str) -> str:
-    return f"Финальный ФО {store_name.strip()}"
+def _fo_upload_folder_name(project: str, store_name: str) -> str:
+    return f"Итоговый фотоотчет {project} {store_name.strip()}"
+
+
+def _disk_folder_id(folder: dict[str, Any]) -> str:
+    return str(
+        folder.get("REAL_OBJECT_ID")
+        or folder.get("realObjectId")
+        or folder.get("ID")
+        or folder.get("id")
+        or ""
+    )
 
 
 def _deadline_tomorrow() -> str:
