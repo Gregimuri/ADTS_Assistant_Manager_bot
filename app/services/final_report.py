@@ -149,7 +149,8 @@ class FinalReportService:
             raise FinalReportError("Не удалось скачать фото из Telegram.")
 
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
-        creator_id, creator_name = await self._resolve_creator(store.manager)
+        creator_id = self._settings.bitrix_fo_fallback_creator_id
+        creator_name = "Титков Григорий"
         deadline = _deadline_tomorrow()
         description = f"Ссылка на диск: {folder_url}"
         task = await self._create_task(
@@ -307,48 +308,6 @@ class FinalReportService:
                         f"Bitrix API: {data.get('error_description') or data.get('error')}"
                     )
 
-    async def _resolve_creator(self, manager_name: str) -> tuple[int, str]:
-        fallback_id = self._settings.bitrix_fo_fallback_creator_id
-        fallback_name = "Титков Григорий"
-        cleaned = (manager_name or "").strip()
-        if not cleaned:
-            return fallback_id, fallback_name
-        user = await self._find_user_by_name(cleaned)
-        if user is None:
-            logger.info("Manager %r not found in Bitrix, fallback to Titkov", cleaned)
-            return fallback_id, fallback_name
-        user_id = int(user.get("ID") or user.get("id") or 0)
-        full_name = _format_user_name(user)
-        if user_id <= 0:
-            return fallback_id, fallback_name
-        return user_id, full_name or cleaned
-
-    async def _find_user_by_name(self, manager_name: str) -> dict[str, Any] | None:
-        result = await self._call(
-            "user.search",
-            {"FILTER": {"FIND": manager_name}},
-        )
-        users = result if isinstance(result, list) else []
-        if not users:
-            # Попробуем переставить фамилию/имя
-            parts = manager_name.split()
-            if len(parts) >= 2:
-                swapped = f"{parts[-1]} {' '.join(parts[:-1])}"
-                result = await self._call("user.search", {"FILTER": {"FIND": swapped}})
-                users = result if isinstance(result, list) else []
-        best: dict[str, Any] | None = None
-        for user in users:
-            if not isinstance(user, dict):
-                continue
-            if user.get("ACTIVE") is False:
-                continue
-            full = _format_user_name(user)
-            if _names_equivalent(full, manager_name) or _person_contains(full, manager_name):
-                return user
-            if best is None:
-                best = user
-        return best
-
     async def _create_task(
         self,
         *,
@@ -403,26 +362,3 @@ def _deadline_tomorrow() -> str:
 def _safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^\w.\- ()а-яА-ЯёЁ]+", "_", name, flags=re.UNICODE).strip("._ ")
     return cleaned or "photo.jpg"
-
-
-def _format_user_name(user: dict[str, Any]) -> str:
-    last = str(user.get("LAST_NAME") or user.get("lastName") or "").strip()
-    first = str(user.get("NAME") or user.get("name") or "").strip()
-    return " ".join(part for part in (last, first) if part).strip()
-
-
-def _names_equivalent(left: str, right: str) -> bool:
-    return _normalize_person(left) == _normalize_person(right)
-
-
-def _normalize_person(value: str) -> str:
-    parts = [part for part in re.split(r"\s+", value.strip().casefold()) if part]
-    return " ".join(sorted(parts))
-
-
-def _person_contains(full_name: str, query: str) -> bool:
-    full_parts = set(_normalize_person(full_name).split())
-    query_parts = set(_normalize_person(query).split())
-    if not query_parts:
-        return False
-    return query_parts.issubset(full_parts)
