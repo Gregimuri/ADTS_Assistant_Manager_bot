@@ -109,7 +109,7 @@ class FinalReportService:
         download_photo,
     ) -> FinalReportResult:
         if not photos:
-            raise FinalReportError("Нужно хотя бы одно фото.")
+            raise FinalReportError("Нужно хотя бы одно фото или видео.")
         if not self._settings.bitrix_webhook_url.strip():
             raise FinalReportError("BITRIX_WEBHOOK_URL не задан.")
 
@@ -131,7 +131,7 @@ class FinalReportService:
                 raise
             except Exception as exc:
                 raise FinalReportError(
-                    f"Не удалось скачать фото №{index} из Telegram: {exc}"
+                    f"Не удалось скачать файл №{index} из Telegram: {exc}"
                 ) from exc
             if not content:
                 continue
@@ -142,11 +142,11 @@ class FinalReportService:
                 raise
             except Exception as exc:
                 raise FinalReportError(
-                    f"Не удалось загрузить фото №{index} на диск Bitrix: {exc}"
+                    f"Не удалось загрузить файл №{index} на диск Bitrix: {exc}"
                 ) from exc
             uploaded += 1
         if uploaded == 0:
-            raise FinalReportError("Не удалось скачать фото из Telegram.")
+            raise FinalReportError("Не удалось скачать файлы из Telegram.")
 
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
         creator_name = "Титков Григорий"

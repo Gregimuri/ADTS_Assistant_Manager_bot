@@ -35,6 +35,7 @@ from app.services.sheets import ProjectStore, SheetsError
 from app.states import BotStates
 from app.texts import (
     MSG_CANCELLED,
+    MSG_FO_BAD_FILE,
     MSG_FO_BUILDING,
     MSG_FO_DONE,
     MSG_FO_ERROR,
@@ -54,6 +55,53 @@ logger = logging.getLogger(__name__)
 router = Router(name="final_report")
 
 _INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u2060"), None)
+
+_VIDEO_EXT = {
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
+    "video/x-matroska": ".mkv",
+    "video/mpeg": ".mpeg",
+}
+
+
+def _fo_mime_allowed(mime: str) -> bool:
+    lowered = (mime or "").casefold()
+    return lowered.startswith("image/") or lowered.startswith("video/")
+
+
+def _video_filename(
+    *,
+    index: int,
+    file_name: str | None,
+    mime_type: str | None,
+) -> str:
+    if file_name and file_name.strip():
+        return file_name.strip()
+    ext = _VIDEO_EXT.get((mime_type or "").casefold(), ".mp4")
+    return f"video_{index}{ext}"
+
+
+async def _append_fo_media(
+    state: FSMContext,
+    *,
+    file_id: str,
+    file_unique_id: str,
+    filename: str,
+) -> int:
+    data = await state.get_data()
+    photos = list(data.get("fo_photos") or [])
+    unique_ids = {item.get("file_unique_id") for item in photos}
+    if file_unique_id not in unique_ids:
+        photos.append(
+            {
+                "file_id": file_id,
+                "file_unique_id": file_unique_id,
+                "filename": filename,
+            }
+        )
+        await state.update_data(fo_photos=photos)
+    return len(photos)
 
 
 def _normalize_tag_text(text: str) -> str:
@@ -226,20 +274,65 @@ async def handle_fo_photo(
 ) -> None:
     photo = message.photo[-1]
     data = await state.get_data()
-    photos = list(data.get("fo_photos") or [])
-    unique_ids = {item.get("file_unique_id") for item in photos}
-    if photo.file_unique_id in unique_ids:
-        count = len(photos)
-    else:
-        photos.append(
-            {
-                "file_id": photo.file_id,
-                "file_unique_id": photo.file_unique_id,
-                "filename": f"photo_{len(photos) + 1}.jpg",
-            }
-        )
-        await state.update_data(fo_photos=photos)
-        count = len(photos)
+    index = len(data.get("fo_photos") or []) + 1
+    count = await _append_fo_media(
+        state,
+        file_id=photo.file_id,
+        file_unique_id=photo.file_unique_id,
+        filename=f"photo_{index}.jpg",
+    )
+    await answer_text(
+        message,
+        MSG_FO_PHOTO_ADDED.format(count=count),
+        reply_markup=fo_photos_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(BotStates.fo_photos, F.video)
+async def handle_fo_video(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    video = message.video
+    if video is None:
+        return
+    data = await state.get_data()
+    index = len(data.get("fo_photos") or []) + 1
+    count = await _append_fo_media(
+        state,
+        file_id=video.file_id,
+        file_unique_id=video.file_unique_id,
+        filename=_video_filename(
+            index=index,
+            file_name=video.file_name,
+            mime_type=video.mime_type,
+        ),
+    )
+    await answer_text(
+        message,
+        MSG_FO_PHOTO_ADDED.format(count=count),
+        reply_markup=fo_photos_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(BotStates.fo_photos, F.video_note)
+async def handle_fo_video_note(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    note = message.video_note
+    if note is None:
+        return
+    data = await state.get_data()
+    index = len(data.get("fo_photos") or []) + 1
+    count = await _append_fo_media(
+        state,
+        file_id=note.file_id,
+        file_unique_id=note.file_unique_id,
+        filename=f"video_note_{index}.mp4",
+    )
     await answer_text(
         message,
         MSG_FO_PHOTO_ADDED.format(count=count),
@@ -257,18 +350,23 @@ async def handle_fo_document_image(
     if document is None:
         return
     mime = (document.mime_type or "").casefold()
-    if not mime.startswith("image/"):
+    if not _fo_mime_allowed(mime):
         await answer_text(
             message,
-            "Пришлите фото (или изображение файлом) и нажмите «Сформировать отчет».",
+            MSG_FO_BAD_FILE,
             reply_markup=fo_photos_keyboard(),
             parse_mode=ParseMode.HTML,
         )
         return
     data = await state.get_data()
-    photos = list(data.get("fo_photos") or [])
-    unique_ids = {item.get("file_unique_id") for item in photos}
-    if document.file_unique_id not in unique_ids:
+    index = len(data.get("fo_photos") or []) + 1
+    if mime.startswith("video/"):
+        filename = _video_filename(
+            index=index,
+            file_name=document.file_name,
+            mime_type=document.mime_type,
+        )
+    else:
         ext = ".jpg"
         if document.file_name and "." in document.file_name:
             ext = "." + document.file_name.rsplit(".", 1)[-1]
@@ -276,17 +374,16 @@ async def handle_fo_document_image(
             ext = ".png"
         elif "webp" in mime:
             ext = ".webp"
-        photos.append(
-            {
-                "file_id": document.file_id,
-                "file_unique_id": document.file_unique_id,
-                "filename": document.file_name or f"photo_{len(photos) + 1}{ext}",
-            }
-        )
-        await state.update_data(fo_photos=photos)
+        filename = document.file_name or f"photo_{index}{ext}"
+    count = await _append_fo_media(
+        state,
+        file_id=document.file_id,
+        file_unique_id=document.file_unique_id,
+        filename=filename,
+    )
     await answer_text(
         message,
-        MSG_FO_PHOTO_ADDED.format(count=len(photos)),
+        MSG_FO_PHOTO_ADDED.format(count=count),
         reply_markup=fo_photos_keyboard(),
         parse_mode=ParseMode.HTML,
     )
@@ -342,7 +439,7 @@ async def handle_fo_build(
             buffer = await bot.download(file_id)
         except Exception as exc:
             raise FinalReportError(
-                f"Не удалось скачать фото из Telegram: {exc}"
+                f"Не удалось скачать файл из Telegram: {exc}"
             ) from exc
         if buffer is None:
             raise FinalReportError("Telegram вернул пустой файл.")
@@ -351,7 +448,7 @@ async def handle_fo_build(
         data = buffer.read()
         if isinstance(data, bytes):
             return data
-        raise FinalReportError("Некорректные данные фото из Telegram.")
+        raise FinalReportError("Некорректные данные файла из Telegram.")
 
     try:
         result = await final_report.submit(
@@ -415,7 +512,7 @@ async def handle_fo_photos_text(
         return
     await answer_text(
         message,
-        "Пришлите фото и нажмите «Сформировать отчет», либо «Отмена».",
+        "Пришлите фото или видео и нажмите «Сформировать отчет», либо «Отмена».",
         reply_markup=fo_photos_keyboard(),
         parse_mode=ParseMode.HTML,
     )
