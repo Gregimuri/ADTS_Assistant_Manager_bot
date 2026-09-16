@@ -31,7 +31,8 @@ from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
 from app.services.exit_reports import ExitReportsService
-from app.services.final_report import FinalReportService
+from app.services.final_report import FO_PROJECTS, FinalReportService
+from app.services.fo_managers import FoManagerRegistry
 from app.services.region_transfer import RegionTransferService
 from app.services.report_storage import ReportStorage
 from app.services.sheets import SheetsClient
@@ -170,7 +171,9 @@ async def run() -> None:
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)
     assembly_reports = AssemblyReportsService(settings, report_storage)
-    final_report = FinalReportService(settings, catalog)
+    fo_managers = FoManagerRegistry(settings)
+    final_report = FinalReportService(settings, catalog, fo_managers)
+    fo_managers_task = asyncio.create_task(fo_managers.warm_up(catalog, FO_PROJECTS))
     bot = Bot(token=settings.bot_token)
     dp = _build_dispatcher(
         catalog,
@@ -194,8 +197,11 @@ async def run() -> None:
         logger.info("Starting polling mode")
         await _start_polling(bot, dp)
     finally:
+        fo_managers_task.cancel()
         admin_scheduler_task.cancel()
         scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fo_managers_task
         with contextlib.suppress(asyncio.CancelledError):
             await admin_scheduler_task
         with contextlib.suppress(asyncio.CancelledError):

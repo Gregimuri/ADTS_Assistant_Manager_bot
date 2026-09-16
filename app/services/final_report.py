@@ -12,6 +12,7 @@ import aiohttp
 from app.config import Settings
 from app.services.bitrix_rest import bitrix_call
 from app.services.catalog import Catalog
+from app.services.fo_managers import FoManagerRegistry
 from app.services.sheets import ProjectStore
 
 logger = logging.getLogger(__name__)
@@ -69,9 +70,15 @@ class FinalReportResult:
 
 
 class FinalReportService:
-    def __init__(self, settings: Settings, catalog: Catalog) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        catalog: Catalog,
+        managers: FoManagerRegistry,
+    ) -> None:
         self._settings = settings
         self._catalog = catalog
+        self._managers = managers
 
     def supported_projects(self) -> list[str]:
         return list(FO_PROJECTS)
@@ -115,13 +122,10 @@ class FinalReportService:
 
         project = self.resolve_project(project)
         group_id = FO_PROJECT_GROUPS[project]
-        folder_name = f"{project} {store.name}".strip()
-
-        parent_id = await self._resolve_parent_folder(project)
-        folder = await self._ensure_subfolder(parent_id, folder_name)
-        folder_id = str(folder.get("ID") or folder.get("id") or "")
+        upload_folder_name = _fo_upload_folder_name(store.name)
+        folder_id = await self._resolve_upload_folder_id(project, store.name)
         if not folder_id:
-            raise FinalReportError("Bitrix не вернул ID созданной папки.")
+            raise FinalReportError("Bitrix не вернул ID папки для загрузки ФО.")
 
         uploaded = 0
         for index, photo in enumerate(photos, start=1):
@@ -149,13 +153,14 @@ class FinalReportService:
             raise FinalReportError("Не удалось скачать файлы из Telegram.")
 
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
-        creator_name = "Титков Григорий"
+        creator_id, creator_name = await self._managers.resolve(store.manager)
         deadline = _deadline_tomorrow()
         description = f"Ссылка на диск: {folder_url}"
         task = await self._create_task(
-            title=f'Финальный отчет - "{store.name}"',
+            title=f'Финальный отчет - "{project} {store.name}"',
             description=description,
             responsible_id=self._settings.bitrix_fo_responsible_id,
+            created_by_id=creator_id,
             auditor_ids=sorted(self._settings.bitrix_fo_auditor_ids),
             group_id=group_id,
             deadline=deadline,
@@ -169,7 +174,7 @@ class FinalReportService:
             task_url=task_url,
             folder_id=folder_id,
             folder_url=folder_url,
-            folder_name=folder_name,
+            folder_name=upload_folder_name,
             photos_uploaded=uploaded,
             creator_name=creator_name,
             store_name=store.name,
@@ -204,6 +209,26 @@ class FinalReportService:
             or parent_id
         )
         return folder_id
+
+    async def _resolve_upload_folder_id(self, project: str, store_name: str) -> str:
+        """Папка «Финальный ФО …» внутри ТТ или в новой папке с именем ТТ."""
+        project_root = await self._resolve_parent_folder(project)
+        tt_name = store_name.strip()
+        fo_name = _fo_upload_folder_name(tt_name)
+
+        tt_folder = await self._find_child_folder(project_root, tt_name)
+        if tt_folder is not None:
+            tt_id = str(tt_folder.get("ID") or tt_folder.get("id") or "")
+        else:
+            created = await self._ensure_subfolder(project_root, tt_name)
+            tt_id = str(created.get("ID") or created.get("id") or "")
+
+        if not tt_id:
+            raise FinalReportError(f"Не удалось получить папку ТТ «{tt_name}» на диске.")
+
+        fo_folder = await self._ensure_subfolder(tt_id, fo_name)
+        fo_id = str(fo_folder.get("ID") or fo_folder.get("id") or "")
+        return fo_id
 
     async def _ensure_subfolder(self, parent_id: str, name: str) -> dict[str, Any]:
         existing = await self._find_child_folder(parent_id, name)
@@ -312,21 +337,23 @@ class FinalReportService:
         title: str,
         description: str,
         responsible_id: int,
+        created_by_id: int,
         auditor_ids: list[int],
         group_id: int,
         deadline: str,
     ) -> dict[str, Any]:
-        # tasks.task.add — JSON-тело (как n8n); CREATED_BY не передаём — постановщик = владелец webhook.
         fields: dict[str, Any] = {
             "TITLE": title,
             "DESCRIPTION": description,
             "DESCRIPTION_IN_BBCODE": "N",
             "RESPONSIBLE_ID": responsible_id,
+            "CREATED_BY": created_by_id,
             "GROUP_ID": group_id,
             "DEADLINE": deadline,
             "PRIORITY": 1,
         }
-        auditors = [user_id for user_id in auditor_ids if user_id != responsible_id]
+        skip = {responsible_id, created_by_id}
+        auditors = [user_id for user_id in auditor_ids if user_id not in skip]
         if auditors:
             fields["AUDITORS"] = auditors
         result = await self._call(
@@ -358,6 +385,10 @@ class FinalReportService:
             )
         except RuntimeError as exc:
             raise FinalReportError(str(exc)) from exc
+
+
+def _fo_upload_folder_name(store_name: str) -> str:
+    return f"Финальный ФО {store_name.strip()}"
 
 
 def _deadline_tomorrow() -> str:

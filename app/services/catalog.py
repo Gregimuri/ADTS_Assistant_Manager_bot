@@ -179,8 +179,11 @@ class Catalog:
             )
         return matches
 
+    async def load_project_stores(self, project: str) -> list[ProjectStore]:
+        return await self._sheets.get_project_stores(project)
+
     async def find_project_stores(self, project: str, query: str) -> list[ProjectStore]:
-        stores = await self._sheets.get_project_stores(project)
+        stores = await self.load_project_stores(project)
         return [store for store in stores if _project_store_matches(store, query.strip())]
 
     async def find_do_report_stores(self, settings: Settings) -> list[DoReportMatch]:
