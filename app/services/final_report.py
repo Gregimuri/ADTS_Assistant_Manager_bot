@@ -225,7 +225,8 @@ class FinalReportService:
 
         tt_folder = await self._locate_tt_folder(project_root, project, tt_name)
         if tt_folder is None:
-            tt_folder = await self._ensure_subfolder(project_root, tt_name)
+            create_name = _tt_folder_create_name(project, tt_name)
+            tt_folder = await self._ensure_subfolder(project_root, create_name)
 
         tt_id = _disk_folder_id(tt_folder)
         if not tt_id:
@@ -245,11 +246,47 @@ class FinalReportService:
         tt_name: str,
     ) -> dict[str, Any] | None:
         legacy = f"{project} {tt_name}".strip()
-        for candidate in (tt_name, legacy):
+        create_name = _tt_folder_create_name(project, tt_name)
+        for candidate in (tt_name, legacy, create_name):
             found = await self._find_child_folder(project_root, candidate)
             if found is not None:
                 return found
-        return None
+        return await self._find_tt_folder_by_tokens(project_root, tt_name)
+
+    async def _find_tt_folder_by_tokens(
+        self,
+        parent_id: str,
+        tt_name: str,
+    ) -> dict[str, Any] | None:
+        best: dict[str, Any] | None = None
+        best_score = -1
+        async for item in self._iter_child_folders(parent_id):
+            name = str(item.get("NAME") or item.get("name") or "")
+            if not _tt_folder_tokens_match(name, tt_name):
+                continue
+            score = _tt_folder_match_score(name, tt_name)
+            if score > best_score:
+                best = item
+                best_score = score
+        return best
+
+    async def _iter_child_folders(self, parent_id: str):
+        start = 0
+        while True:
+            result = await self._call(
+                "disk.folder.getchildren",
+                {"id": parent_id, "start": start},
+            )
+            items = result if isinstance(result, list) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("TYPE") or item.get("type") or "").casefold()
+                if not item_type or item_type == "folder":
+                    yield item
+            if len(items) < 50:
+                break
+            start += 50
 
     async def _ensure_subfolder(self, parent_id: str, name: str) -> dict[str, Any]:
         existing = await self._find_child_folder(parent_id, name)
@@ -328,7 +365,7 @@ class FinalReportService:
                 },
             )
             return
-        timeout = aiohttp.ClientTimeout(total=180)
+        timeout = aiohttp.ClientTimeout(total=600)
         form = aiohttp.FormData()
         form.add_field(
             field,
@@ -410,6 +447,45 @@ class FinalReportService:
 
 def _fo_upload_folder_name(project: str, store_name: str) -> str:
     return f"Итоговый фотоотчет {project} {store_name.strip()}"
+
+
+def _name_tokens(value: str) -> list[str]:
+    return [part for part in value.split() if part.strip()]
+
+
+def _tt_folder_tokens_match(folder_name: str, tt_name: str) -> bool:
+    left = folder_name.casefold().strip()
+    right = tt_name.casefold().strip()
+    if left == right:
+        return True
+    folder_parts = {part.casefold() for part in _name_tokens(folder_name)}
+    tt_parts = [part.casefold() for part in _name_tokens(tt_name)]
+    if not tt_parts or not folder_parts:
+        return False
+    if all(part in folder_parts for part in tt_parts):
+        return True
+    if len(folder_parts) == 1:
+        only = next(iter(folder_parts))
+        if only in tt_parts:
+            return True
+    return False
+
+
+def _tt_folder_match_score(folder_name: str, tt_name: str) -> int:
+    if folder_name.casefold().strip() == tt_name.casefold().strip():
+        return 10_000
+    folder_parts = set(_name_tokens(folder_name))
+    tt_parts = set(_name_tokens(tt_name))
+    overlap = len({p.casefold() for p in folder_parts} & {p.casefold() for p in tt_parts})
+    return overlap * 100 - abs(len(folder_parts) - len(tt_parts))
+
+
+def _tt_folder_create_name(project: str, tt_name: str) -> str:
+    """Новая папка ТТ без лишнего префикса проекта («МФ …» → «…»)."""
+    parts = _name_tokens(tt_name)
+    if len(parts) >= 2 and parts[0].casefold() == project.casefold():
+        return " ".join(parts[1:])
+    return tt_name.strip()
 
 
 def _disk_folder_id(folder: dict[str, Any]) -> str:

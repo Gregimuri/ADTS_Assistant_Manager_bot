@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import logging
-from io import BytesIO
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction, MessageEntityType, ParseMode
@@ -32,6 +31,7 @@ from app.services.final_report import (
     FinalReportService,
 )
 from app.services.sheets import ProjectStore, SheetsError
+from app.telegram_files import download_telegram_file
 from app.states import BotStates
 from app.texts import (
     MSG_CANCELLED,
@@ -88,18 +88,20 @@ async def _append_fo_media(
     file_id: str,
     file_unique_id: str,
     filename: str,
+    file_size: int | None = None,
 ) -> int:
     data = await state.get_data()
     photos = list(data.get("fo_photos") or [])
     unique_ids = {item.get("file_unique_id") for item in photos}
     if file_unique_id not in unique_ids:
-        photos.append(
-            {
-                "file_id": file_id,
-                "file_unique_id": file_unique_id,
-                "filename": filename,
-            }
-        )
+        item: dict[str, object] = {
+            "file_id": file_id,
+            "file_unique_id": file_unique_id,
+            "filename": filename,
+        }
+        if file_size is not None:
+            item["file_size"] = file_size
+        photos.append(item)
         await state.update_data(fo_photos=photos)
     return len(photos)
 
@@ -280,6 +282,7 @@ async def handle_fo_photo(
         file_id=photo.file_id,
         file_unique_id=photo.file_unique_id,
         filename=f"photo_{index}.jpg",
+        file_size=photo.file_size,
     )
     await answer_text(
         message,
@@ -308,6 +311,7 @@ async def handle_fo_video(
             file_name=video.file_name,
             mime_type=video.mime_type,
         ),
+        file_size=video.file_size,
     )
     await answer_text(
         message,
@@ -332,6 +336,7 @@ async def handle_fo_video_note(
         file_id=note.file_id,
         file_unique_id=note.file_unique_id,
         filename=f"video_note_{index}.mp4",
+        file_size=note.file_size,
     )
     await answer_text(
         message,
@@ -380,6 +385,7 @@ async def handle_fo_document_image(
         file_id=document.file_id,
         file_unique_id=document.file_unique_id,
         filename=filename,
+        file_size=document.file_size,
     )
     await answer_text(
         message,
@@ -434,21 +440,19 @@ async def handle_fo_build(
     )
     await bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_DOCUMENT)
 
+    file_sizes: dict[str, int | None] = {}
+    for item in raw_photos:
+        fid = str(item.get("file_id") or "")
+        size = item.get("file_size")
+        file_sizes[fid] = int(size) if size is not None else None
+
     async def download_photo(file_id: str) -> bytes:
-        try:
-            buffer = await bot.download(file_id)
-        except Exception as exc:
-            raise FinalReportError(
-                f"Не удалось скачать файл из Telegram: {exc}"
-            ) from exc
-        if buffer is None:
-            raise FinalReportError("Telegram вернул пустой файл.")
-        if isinstance(buffer, BytesIO):
-            return buffer.getvalue()
-        data = buffer.read()
-        if isinstance(data, bytes):
-            return data
-        raise FinalReportError("Некорректные данные файла из Telegram.")
+        return await download_telegram_file(
+            bot,
+            file_id,
+            settings,
+            file_size=file_sizes.get(file_id),
+        )
 
     try:
         result = await final_report.submit(

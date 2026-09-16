@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("WEBHOOK_BASE_URL", "RENDER_EXTERNAL_URL"),
     )
+    telegram_local_api_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("TELEGRAM_LOCAL_API_URL", "BOT_API_URL"),
+    )
 
     @property
     def public_base_url(self) -> str:

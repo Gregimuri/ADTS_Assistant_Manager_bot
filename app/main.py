@@ -15,6 +15,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from pathlib import Path
 
 from app.config import Settings, get_settings
+from app.telegram_bot import create_bot
 from app.handlers import (
     admin_reports_router,
     do_report_router,
@@ -174,7 +175,9 @@ async def run() -> None:
     fo_managers = FoManagerRegistry(settings)
     final_report = FinalReportService(settings, catalog, fo_managers)
     fo_managers_task = asyncio.create_task(fo_managers.warm_up(catalog, FO_PROJECTS))
-    bot = Bot(token=settings.bot_token)
+    bot = create_bot(settings)
+    if settings.telegram_local_api_url.strip():
+        logger.info("Telegram local Bot API: %s", settings.telegram_local_api_url.strip())
     dp = _build_dispatcher(
         catalog,
         region_transfer,
