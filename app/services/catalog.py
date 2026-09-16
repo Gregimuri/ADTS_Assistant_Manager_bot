@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 
 from app.config import Settings
+from app.services.bitrix_rest import parse_bitrix_task_id
+from app.services.bitrix_tasks import BitrixTasksClient
 from app.services.sheets import DoStore, Player, ProjectStore, SheetsClient, ToVisit
 
 _MSK = timezone(timedelta(hours=3))
@@ -57,8 +59,17 @@ class DoReportMatch:
 
 
 class Catalog:
-    def __init__(self, sheets: SheetsClient) -> None:
+    def __init__(self, sheets: SheetsClient, settings: Settings | None = None) -> None:
         self._sheets = sheets
+        self._settings = settings
+        self._bitrix: BitrixTasksClient | None = None
+
+    def _bitrix_client(self) -> BitrixTasksClient | None:
+        if self._settings is None or not self._settings.bitrix_webhook_url.strip():
+            return None
+        if self._bitrix is None:
+            self._bitrix = BitrixTasksClient(self._settings)
+        return self._bitrix
 
     async def find_stores(self, query: str) -> list[StoreMatch]:
         players = await self._sheets.get_players()
@@ -90,24 +101,40 @@ class Catalog:
 
     async def find_to_visits(self, query: str) -> list[ToMatch]:
         visits = await self._sheets.get_to_visits()
-        return [
-            ToMatch(query=query, visit=visit)
-            for visit in visits
-            if _name_matches(visit.name, query)
-        ]
+        result: list[ToMatch] = []
+        for visit in visits:
+            if not _name_matches(visit.name, query):
+                continue
+            task_id = await self._resolve_to_bitrix_task_id(query, visit)
+            if task_id != visit.bitrix_task_id:
+                visit = replace(visit, bitrix_task_id=task_id)
+            result.append(ToMatch(query=query, visit=visit))
+        return result
 
     async def find_emm_bitrix_task(self, query: str) -> str:
-        """Ищет в листе ТО задачу Bitrix, если в виде работ есть «ЕММ»."""
+        """Ссылка на задачу Bitrix для ЕММ: лист ТО или поиск в Bitrix."""
         visits = await self._sheets.get_to_visits()
-        task_id = ""
         for visit in visits:
             if not _name_matches(visit.name, query):
                 continue
             if "емм" not in visit.work_type.casefold():
                 continue
-            if visit.bitrix_task_id.strip():
-                task_id = visit.bitrix_task_id.strip()
-        return task_id
+            task_id = parse_bitrix_task_id(visit.bitrix_task_id)
+            if task_id:
+                return task_id
+        client = self._bitrix_client()
+        if client is None:
+            return ""
+        return await client.find_task_id_for_store(query, emm_only=True)
+
+    async def _resolve_to_bitrix_task_id(self, query: str, visit: ToVisit) -> str:
+        task_id = parse_bitrix_task_id(visit.bitrix_task_id)
+        if task_id:
+            return task_id
+        client = self._bitrix_client()
+        if client is None:
+            return ""
+        return await client.find_task_id_for_store(query, emm_only=False)
 
     async def parse_info_queries(self, lines: list[str]) -> list[InfoQuery]:
         projects = await self._sheets.get_project_names()

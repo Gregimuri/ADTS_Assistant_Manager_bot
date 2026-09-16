@@ -12,6 +12,7 @@ from urllib.parse import quote
 import aiohttp
 
 from app.config import Settings
+from app.services.bitrix_rest import parse_bitrix_task_id
 from app.services.exit_plan_columns import resolve_exit_date_headers
 
 logger = logging.getLogger(__name__)
@@ -357,7 +358,16 @@ def _parse_to_csv(text: str) -> list[ToVisit]:
             "work_type": ("вид работ",),
             "actual_cost": ("фактическая стоимость работ",),
             "extra_cost": ("доп затраты (компенсации)", "доп затраты"),
-            "bitrix_task_id": ("задача bitrix", "bitrix"),
+            "bitrix_task_id": (
+                "задача bitrix",
+                "bitrix",
+                "№ задачи bitrix",
+                "номер задачи bitrix",
+                "id задачи",
+                "ссылка на задачу",
+            ),
+            "full_description": ("полное описание задачи",),
+            "work_description": ("описание задачи основное",),
         },
     )
     if "name" not in field_map:
@@ -369,6 +379,13 @@ def _parse_to_csv(text: str) -> list[ToVisit]:
         name = _cell(row, field_map["name"])
         if not name:
             continue
+        task_id = parse_bitrix_task_id(_cell(row, field_map.get("bitrix_task_id")))
+        if not task_id:
+            for key in ("full_description", "work_description"):
+                col = field_map.get(key)
+                task_id = parse_bitrix_task_id(_cell(row, col))
+                if task_id:
+                    break
         visits.append(
             ToVisit(
                 name=name,
@@ -376,7 +393,7 @@ def _parse_to_csv(text: str) -> list[ToVisit]:
                 work_type=_cell(row, field_map.get("work_type")),
                 actual_cost=parse_money(_cell(row, field_map.get("actual_cost"))),
                 extra_cost=parse_money(_cell(row, field_map.get("extra_cost"))),
-                bitrix_task_id=_cell(row, field_map.get("bitrix_task_id")),
+                bitrix_task_id=task_id,
             )
         )
     return visits

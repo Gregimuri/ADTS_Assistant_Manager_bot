@@ -7,11 +7,10 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urljoin
-
 import aiohttp
 
 from app.config import Settings
+from app.services.bitrix_rest import bitrix_call
 from app.services.catalog import Catalog
 from app.services.sheets import ProjectStore
 
@@ -73,7 +72,6 @@ class FinalReportService:
     def __init__(self, settings: Settings, catalog: Catalog) -> None:
         self._settings = settings
         self._catalog = catalog
-        self._base_url = settings.bitrix_webhook_url.rstrip("/") + "/"
 
     def supported_projects(self) -> list[str]:
         return list(FO_PROJECTS)
@@ -386,35 +384,15 @@ class FinalReportService:
         raise FinalReportError("Не удалось создать задачу в Bitrix.")
 
     async def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        url = urljoin(self._base_url, method)
-        timeout = aiohttp.ClientTimeout(total=120)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=params or {}) as response:
-                    body = await response.text()
-                    try:
-                        data = json.loads(body) if body else {}
-                    except json.JSONDecodeError as exc:
-                        raise FinalReportError(
-                            f"Bitrix вернул не-JSON ответ (HTTP {response.status})."
-                        ) from exc
-                    if response.status >= 400 and not (
-                        isinstance(data, dict) and data.get("error")
-                    ):
-                        raise FinalReportError(
-                            f"Bitrix HTTP {response.status}: {body[:300]}"
-                        )
-        except FinalReportError:
-            raise
-        except aiohttp.ClientError as exc:
-            raise FinalReportError(f"Сеть Bitrix: {exc}") from exc
-        if not isinstance(data, dict):
-            raise FinalReportError("Bitrix вернул неожиданный ответ.")
-        if data.get("error"):
-            error = str(data.get("error") or "")
-            description = str(data.get("error_description") or error)
-            raise FinalReportError(f"Bitrix API: {description}")
-        return data.get("result")
+            return await bitrix_call(
+                self._settings,
+                method,
+                params,
+                timeout_seconds=120,
+            )
+        except RuntimeError as exc:
+            raise FinalReportError(str(exc)) from exc
 
 
 def _deadline_tomorrow() -> str:

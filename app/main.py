@@ -165,7 +165,7 @@ async def run() -> None:
     _configure_logging()
     settings = get_settings()
     sheets = SheetsClient(settings)
-    catalog = Catalog(sheets)
+    catalog = Catalog(sheets, settings)
     region_transfer = RegionTransferService(sheets)
     report_storage = ReportStorage(Path(settings.report_data_path))
     exit_reports = ExitReportsService(sheets, report_storage)

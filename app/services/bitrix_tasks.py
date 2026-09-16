@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -9,6 +10,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from app.config import Settings
+from app.services.bitrix_rest import bitrix_call, flatten_params
 from app.services.dates import msk_today, parse_ru_date
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ class BitrixTasksClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._base_url = settings.bitrix_webhook_url.rstrip("/") + "/"
+        self._store_task_cache: dict[tuple[str, bool], str] = {}
 
     async def list_assembly_tasks(self) -> list[BitrixTask]:
         if not self._settings.bitrix_webhook_url.strip():
@@ -63,6 +66,62 @@ class BitrixTasksClient:
         matched = list(tasks_by_id.values())
         logger.info("Loaded %s assembly tasks from Bitrix", len(matched))
         return matched
+
+    async def find_task_id_for_store(self, query: str, *, emm_only: bool = False) -> str:
+        """Ищет задачу Bitrix по названию ТТ (лист ТО больше не хранит id)."""
+        key = (query.strip().casefold(), emm_only)
+        if key in self._store_task_cache:
+            return self._store_task_cache[key]
+        cleaned = query.strip()
+        if not cleaned or not self._settings.bitrix_webhook_url.strip():
+            self._store_task_cache[key] = ""
+            return ""
+
+        search_terms: list[str] = [cleaned]
+        parts = cleaned.split()
+        if len(parts) > 2:
+            search_terms.append(" ".join(parts[:2]))
+        if parts:
+            search_terms.append(parts[0])
+
+        seen_terms: set[str] = set()
+        task_id = ""
+        for term in search_terms:
+            marker = term.casefold()
+            if marker in seen_terms:
+                continue
+            seen_terms.add(marker)
+            try:
+                raw_tasks = await self._search_tasks_by_title(term)
+            except BitrixTasksError:
+                logger.exception("Bitrix task lookup failed for %r", term)
+                break
+            picked = _pick_store_task(raw_tasks, cleaned, emm_only=emm_only)
+            if picked:
+                task_id = picked
+                break
+
+        self._store_task_cache[key] = task_id
+        return task_id
+
+    async def _search_tasks_by_title(self, term: str) -> list[dict[str, Any]]:
+        try:
+            payload = await bitrix_call(
+                self._settings,
+                "tasks.task.list",
+                {
+                    "select": ["ID", "TITLE", "DESCRIPTION"],
+                    "filter": {"%TITLE": term},
+                    "start": 0,
+                },
+                timeout_seconds=60,
+            )
+        except RuntimeError as exc:
+            raise BitrixTasksError(str(exc)) from exc
+        if isinstance(payload, dict):
+            batch = payload.get("tasks") or []
+            return [item for item in batch if isinstance(item, dict)]
+        return []
 
     async def _fetch_tasks(self, filter_params: dict[str, Any]) -> list[BitrixTask]:
         tasks: list[BitrixTask] = []
@@ -112,7 +171,7 @@ class BitrixTasksClient:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         url = urljoin(self._base_url, method)
-        async with session.get(url, params=_flatten_params(params)) as response:
+        async with session.get(url, params=flatten_params(params)) as response:
             response.raise_for_status()
             data = await response.json(content_type=None)
         if not isinstance(data, dict):
@@ -125,6 +184,34 @@ class BitrixTasksClient:
         if not isinstance(result, dict):
             raise BitrixTasksError("Bitrix API: пустой result.")
         return result
+
+
+def _pick_store_task(
+    raw_tasks: list[dict[str, Any]],
+    store_query: str,
+    *,
+    emm_only: bool,
+) -> str:
+    for raw in raw_tasks:
+        title = str(raw.get("title") or raw.get("TITLE") or "")
+        description = str(raw.get("description") or raw.get("DESCRIPTION") or "")
+        if emm_only and "емм" not in f"{title} {description}".casefold():
+            continue
+        if _store_name_in_title(title, store_query):
+            return str(raw.get("id") or raw.get("ID") or "").strip()
+    for raw in raw_tasks:
+        title = str(raw.get("title") or raw.get("TITLE") or "")
+        description = str(raw.get("description") or raw.get("DESCRIPTION") or "")
+        if emm_only and "емм" not in f"{title} {description}".casefold():
+            continue
+        if store_query.casefold() in title.casefold():
+            return str(raw.get("id") or raw.get("ID") or "").strip()
+    return ""
+
+
+def _store_name_in_title(title: str, store_query: str) -> bool:
+    pattern = rf"(?<!\w){re.escape(store_query)}(?!\w)"
+    return bool(re.search(pattern, title, flags=re.IGNORECASE))
 
 
 def count_open_assembly_tasks(tasks: list[BitrixTask]) -> int:
@@ -242,17 +329,3 @@ def _parse_bitrix_date(value: object) -> date | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
     except ValueError:
         return None
-
-
-def _flatten_params(params: dict[str, Any], prefix: str = "") -> dict[str, str]:
-    flat: dict[str, str] = {}
-    for key, value in params.items():
-        full_key = f"{prefix}[{key}]" if prefix else str(key)
-        if isinstance(value, list):
-            for index, item in enumerate(value):
-                flat[f"{full_key}[{index}]"] = str(item)
-        elif isinstance(value, dict):
-            flat.update(_flatten_params(value, full_key))
-        else:
-            flat[full_key] = str(value)
-    return flat
