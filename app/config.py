@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     bitrix_webhook_url: str = "https://adts.bitrix24.ru/rest/401/t83wze013cj1wvky/"
     bitrix_assembly_responsible_id: int = 197
     bitrix_assembly_creator_id: int = 439
-    bitrix_fo_responsible_id: int = 281
+    bitrix_fo_responsible_ids: tuple[int, ...] = (201, 203, 641)
     bitrix_fo_fallback_creator_id: int = 401
-    bitrix_fo_auditor_ids: frozenset[int] = frozenset({281, 203, 201, 401})
+    bitrix_fo_auditor_ids: frozenset[int] = frozenset({281, 203, 201, 401, 641})
     report_data_path: str = "data/reports.json"
     scheduled_exit_projects: str = "ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО"
     do_order_horizon_days: int = 17
@@ -72,6 +72,22 @@ class Settings(BaseSettings):
         if isinstance(value, (list, tuple, set)):
             return frozenset(int(item) for item in value)
         raise ValueError(f"Invalid user id list: {value!r}")
+
+    @field_validator("bitrix_fo_responsible_ids", mode="before")
+    @classmethod
+    def _parse_responsible_ids(cls, value: object) -> tuple[int, ...]:
+        if value is None or value == "":
+            return (201, 203, 641)
+        if isinstance(value, tuple) and value and all(isinstance(i, int) for i in value):
+            return value
+        if isinstance(value, int):
+            return (value,)
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.split(",") if part.strip()]
+            return tuple(int(part) for part in parts)
+        if isinstance(value, (list, tuple)):
+            return tuple(int(item) for item in value)
+        raise ValueError(f"Invalid responsible id list: {value!r}")
 
 
 @lru_cache

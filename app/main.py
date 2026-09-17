@@ -173,7 +173,7 @@ async def run() -> None:
     exit_reports = ExitReportsService(sheets, report_storage)
     assembly_reports = AssemblyReportsService(settings, report_storage)
     fo_managers = FoManagerRegistry(settings)
-    final_report = FinalReportService(settings, catalog, fo_managers)
+    final_report = FinalReportService(settings, catalog, fo_managers, report_storage)
     fo_managers_task = asyncio.create_task(fo_managers.warm_up(catalog, FO_PROJECTS))
     bot = create_bot(settings)
     if settings.telegram_local_api_url.strip():

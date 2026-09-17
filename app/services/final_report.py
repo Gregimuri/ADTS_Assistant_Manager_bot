@@ -13,6 +13,7 @@ from app.config import Settings
 from app.services.bitrix_rest import bitrix_call
 from app.services.catalog import Catalog
 from app.services.fo_managers import FoManagerRegistry
+from app.services.report_storage import ReportStorage
 from app.services.sheets import ProjectStore
 
 logger = logging.getLogger(__name__)
@@ -75,10 +76,12 @@ class FinalReportService:
         settings: Settings,
         catalog: Catalog,
         managers: FoManagerRegistry,
+        storage: ReportStorage | None = None,
     ) -> None:
         self._settings = settings
         self._catalog = catalog
         self._managers = managers
+        self._storage = storage
 
     def supported_projects(self) -> list[str]:
         return list(FO_PROJECTS)
@@ -160,10 +163,11 @@ class FinalReportService:
             f"Постановщик (менеджер ТТ): {manager_name}\n"
             f"Ссылка на диск: {folder_url}"
         )
-        auditor_ids = sorted(set(self._settings.bitrix_fo_auditor_ids))
-        # Поляков (исполнитель) тоже должен оставаться наблюдателем.
+        responsible_id = await self._next_responsible_id()
         auditor_ids = sorted(
-            set(auditor_ids) | {self._settings.bitrix_fo_responsible_id}
+            set(self._settings.bitrix_fo_auditor_ids)
+            | set(self._settings.bitrix_fo_responsible_ids)
+            | {responsible_id}
         )
         if manager_id != api_creator_id:
             auditor_ids = sorted(set(auditor_ids) | {manager_id})
@@ -171,7 +175,7 @@ class FinalReportService:
         task = await self._create_task(
             title=f'Финальный отчет - "{project} {store.name}"',
             description=description,
-            responsible_id=self._settings.bitrix_fo_responsible_id,
+            responsible_id=responsible_id,
             created_by_id=api_creator_id,
             auditor_ids=auditor_ids,
             group_id=group_id,
@@ -193,6 +197,17 @@ class FinalReportService:
             store_name=store.name,
             project=project,
         )
+
+    async def _next_responsible_id(self) -> int:
+        candidates = self._settings.bitrix_fo_responsible_ids
+        if not candidates:
+            raise FinalReportError("Не задан список исполнителей ФО.")
+        if self._storage is None:
+            return int(candidates[0])
+        try:
+            return await self._storage.next_fo_responsible_id(candidates)
+        except ValueError as exc:
+            raise FinalReportError(str(exc)) from exc
 
     async def _resolve_parent_folder(self, project: str) -> str:
         """Папка проекта на диске Bitrix, куда складываются ФО."""

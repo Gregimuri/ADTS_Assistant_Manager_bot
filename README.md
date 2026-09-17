@@ -123,9 +123,9 @@ python -m app.main
 | `DO_REPORT_USER_IDS` | Кому доступны `#ДО` и кнопка «Отчет ДО расходка» |
 | `ADMIN_REPORT_CHAT_ID` | Группа для админ-отчётов (по умолчанию `-5278414891`) |
 | `BITRIX_WEBHOOK_URL` | Webhook Bitrix24 (нужны права `task`, `user`, `disk`) |
-| `BITRIX_FO_RESPONSIBLE_ID` | Исполнитель задачи ФО (Поляков Сергей) |
+| `BITRIX_FO_RESPONSIBLE_IDS` | Исполнители ФО по кругу: Андреевских → Корчагин → Белов (`201,203,641`) |
 | `BITRIX_FO_FALLBACK_CREATOR_ID` | Постановщик по умолчанию (Титков Григорий) |
-| `BITRIX_FO_AUDITOR_IDS` | Наблюдатели задачи ФО |
+| `BITRIX_FO_AUDITOR_IDS` | Наблюдатели задачи ФО (Поляков, Корчагин, Андреевских, Титков, Белов) |
 | `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`, том `bot-data` в Docker) |
 | `SCHEDULED_EXIT_PROJECTS` | Проекты в автоматическом плане/отчёте выходов (через запятую) |
 | `DO_ORDER_HORIZON_DAYS` | Горизонт заказа для регионов, дней (17) |

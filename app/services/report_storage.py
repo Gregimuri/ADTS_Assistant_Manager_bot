@@ -75,18 +75,40 @@ class ReportStorage:
             return None
         return snapshot
 
+    async def next_fo_responsible_id(self, candidates: tuple[int, ...] | list[int]) -> int:
+        """Круговая очередь исполнителей ФО: Андреевских → Корчагин → Белов → …"""
+        pool = [int(user_id) for user_id in candidates if int(user_id) > 0]
+        if not pool:
+            raise ValueError("Список исполнителей ФО пуст.")
+        async with self._lock:
+            data = self._read()
+            state = data.setdefault("fo_responsible_rr", {})
+            index = int(state.get("next_index") or 0) % len(pool)
+            user_id = pool[index]
+            state["next_index"] = (index + 1) % len(pool)
+            state["last_user_id"] = user_id
+            self._write(data)
+            logger.info(
+                "FO responsible round-robin -> %s (index %s/%s)",
+                user_id,
+                index,
+                len(pool),
+            )
+            return user_id
+
     def _read(self) -> dict:
         if not self._path.exists():
-            return {"exit_plans": {}, "assembly_snapshots": {}}
+            return {"exit_plans": {}, "assembly_snapshots": {}, "fo_responsible_rr": {}}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             logger.exception("Failed to read report storage from %s", self._path)
-            return {"exit_plans": {}, "assembly_snapshots": {}}
+            return {"exit_plans": {}, "assembly_snapshots": {}, "fo_responsible_rr": {}}
         if not isinstance(data, dict):
-            return {"exit_plans": {}, "assembly_snapshots": {}}
+            return {"exit_plans": {}, "assembly_snapshots": {}, "fo_responsible_rr": {}}
         data.setdefault("exit_plans", {})
         data.setdefault("assembly_snapshots", {})
+        data.setdefault("fo_responsible_rr", {})
         return data
 
     def _write(self, data: dict) -> None:
