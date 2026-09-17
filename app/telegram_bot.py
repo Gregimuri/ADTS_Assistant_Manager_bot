@@ -14,7 +14,8 @@ def create_bot(settings: Settings) -> Bot:
     base = settings.telegram_local_api_url.strip()
     if not base:
         return Bot(token=settings.bot_token)
-    api = TelegramAPIServer.from_base_url(base.rstrip("/"))
+    # aiogram 3.x: from_base, URL со слэшем в конце.
+    api = TelegramAPIServer.from_base(base.rstrip("/") + "/")
     session = AiohttpSession(api=api)
     return Bot(token=settings.bot_token, session=session)
 

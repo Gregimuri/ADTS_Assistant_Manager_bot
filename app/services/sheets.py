@@ -116,11 +116,13 @@ class SheetsClient:
             ttl = self._settings.sheets_cache_ttl_seconds
             if self._players is not None and now - self._players_loaded_at < ttl:
                 return self._players
-            text = await self._fetch_csv(gid=self._settings.spreadsheet_gid)
-            self._players = _parse_emm_csv(text)
-            self._players_loaded_at = now
-            logger.info("Loaded %s players from Google Sheets", len(self._players))
-            return self._players
+        text = await self._fetch_csv(gid=self._settings.spreadsheet_gid)
+        players = _parse_emm_csv(text)
+        async with self._lock:
+            self._players = players
+            self._players_loaded_at = time.monotonic()
+            logger.info("Loaded %s players from Google Sheets", len(players))
+            return players
 
     async def get_to_visits(self) -> list[ToVisit]:
         async with self._lock:
@@ -128,11 +130,13 @@ class SheetsClient:
             ttl = self._settings.sheets_cache_ttl_seconds
             if self._to_visits is not None and now - self._to_loaded_at < ttl:
                 return self._to_visits
-            text = await self._fetch_csv(sheet=self._settings.to_sheet_name)
-            self._to_visits = _parse_to_csv(text)
-            self._to_loaded_at = now
-            logger.info("Loaded %s TO visits from Google Sheets", len(self._to_visits))
-            return self._to_visits
+        text = await self._fetch_csv(sheet=self._settings.to_sheet_name)
+        visits = _parse_to_csv(text)
+        async with self._lock:
+            self._to_visits = visits
+            self._to_loaded_at = time.monotonic()
+            logger.info("Loaded %s TO visits from Google Sheets", len(visits))
+            return visits
 
     async def get_project_names(self) -> list[str]:
         async with self._lock:

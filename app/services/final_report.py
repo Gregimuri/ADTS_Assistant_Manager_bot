@@ -288,7 +288,12 @@ class FinalReportService:
     ) -> dict[str, Any] | None:
         legacy = f"{project} {tt_name}".strip()
         create_name = _tt_folder_create_name(project, tt_name)
-        for candidate in (tt_name, legacy, create_name):
+        seen: set[str] = set()
+        for candidate in (tt_name, create_name, legacy):
+            key = candidate.casefold().strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
             found = await self._find_child_folder(project_root, candidate)
             if found is not None:
                 return found
@@ -476,7 +481,8 @@ class FinalReportService:
         counts: dict[str, int] = {}
         for needle in needles:
             try:
-                result = await self._call(
+                result = await bitrix_call(
+                    self._settings,
                     "tasks.task.list",
                     {
                         "select": ["ID", "TITLE", "UF_CRM_TASK"],
@@ -484,8 +490,9 @@ class FinalReportService:
                         "order": {"ID": "DESC"},
                         "start": 0,
                     },
+                    timeout_seconds=30,
                 )
-            except FinalReportError:
+            except RuntimeError:
                 logger.exception("CRM lookup via tasks failed for %r", needle)
                 continue
             tasks = result.get("tasks") if isinstance(result, dict) else result
@@ -505,6 +512,14 @@ class FinalReportService:
                     if not binding:
                         continue
                     counts[binding] = counts.get(binding, 0) + 1
+                    if binding.startswith("T408_"):
+                        logger.info(
+                            "CRM object for project=%s store=%r -> %s",
+                            project,
+                            store_name,
+                            binding,
+                        )
+                        return [binding]
         if not counts:
             logger.info(
                 "CRM object for project=%s store=%r not found",
@@ -512,7 +527,6 @@ class FinalReportService:
                 store_name,
             )
             return []
-        # Предпочитаем смарт-процесс T408_*, как в существующих ФО.
         spa = {key: value for key, value in counts.items() if key.startswith("T408_")}
         pool = spa or counts
         best = sorted(pool.items(), key=lambda item: (-item[1], item[0]))[0][0]

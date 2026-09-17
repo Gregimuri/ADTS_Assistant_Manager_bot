@@ -8,7 +8,7 @@ import sys
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.memory import MemoryStorage, SimpleEventIsolation
 from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -91,7 +91,8 @@ def _build_dispatcher(
     final_report: FinalReportService,
     settings: Settings,
 ) -> Dispatcher:
-    dp = Dispatcher(storage=MemoryStorage())
+    # Изоляция событий: альбомы ФО не затирают друг друга в FSM.
+    dp = Dispatcher(storage=MemoryStorage(), events_isolation=SimpleEventIsolation())
     dp.include_routers(
         start_router,
         admin_reports_router,

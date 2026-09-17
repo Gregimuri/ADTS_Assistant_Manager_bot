@@ -103,6 +103,20 @@ class Settings(BaseSettings):
             return parsed or (201, 203, 641)
         raise ValueError(f"Invalid responsible id list: {value!r}")
 
+    @field_validator("port", mode="before")
+    @classmethod
+    def _parse_port(cls, value: object) -> int | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return None
+            return int(cleaned)
+        return int(value)  # type: ignore[arg-type]
+
 
 @lru_cache
 def get_settings() -> Settings:

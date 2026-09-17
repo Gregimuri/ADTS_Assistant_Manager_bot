@@ -13,7 +13,10 @@ _TASK_VIEW_RE = re.compile(r"task/view/(\d+)", re.IGNORECASE)
 
 
 def parse_bitrix_task_id(value: str) -> str:
-    """ID задачи или URL Bitrix → числовой id."""
+    """ID задачи или URL Bitrix → числовой id.
+
+    Не выдирает цифры из дат/телефонов — только чистый id или /task/view/<id>/.
+    """
     text = (value or "").strip()
     if not text:
         return ""
@@ -22,10 +25,7 @@ def parse_bitrix_task_id(value: str) -> str:
     match = _TASK_VIEW_RE.search(text)
     if match:
         return match.group(1)
-    digits = re.sub(r"\D", "", text)
-    if len(digits) >= 4:
-        return digits
-    return text
+    return ""
 
 
 def flatten_params(params: dict[str, Any], prefix: str = "") -> dict[str, str]:

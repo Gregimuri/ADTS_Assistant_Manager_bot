@@ -90,10 +90,30 @@ async def _preview_report(
     text: str,
     *,
     extra_text: str | None = None,
+    bot: Bot | None = None,
 ) -> None:
     await answer_text(message, text)
     if extra_text:
         await answer_text(message, extra_text)
+    # В группах reply-кнопок нет — сразу отправляем в админ-чат.
+    if is_group_chat(message):
+        if bot is None:
+            await answer_text(
+                message,
+                "Откройте бота в личке, чтобы подтвердить отправку отчёта.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        try:
+            await send_report_text(bot, settings, text)
+            if extra_text:
+                await send_report_text(bot, settings, extra_text)
+        except Exception:
+            logger.exception("Failed to send admin report from group")
+            await answer_text(message, MSG_ADMIN_SEND_ERROR, parse_mode=ParseMode.HTML)
+            return
+        await answer_text(message, MSG_ADMIN_SENT, parse_mode=ParseMode.HTML)
+        return
     await state.set_state(BotStates.waiting_admin_report_confirm)
     state_data: dict[str, object] = {
         "admin_report_text": text,
@@ -154,7 +174,7 @@ async def _build_and_preview_exit_plan(
         )
         return
     await state.clear()
-    await _preview_report(message, state, settings, text)
+    await _preview_report(message, state, settings, text, bot=bot)
 
 
 async def _build_and_preview_exit_report(
@@ -204,7 +224,7 @@ async def _build_and_preview_exit_report(
         )
         return
     await state.clear()
-    await _preview_report(message, state, settings, text, extra_text=extra_text)
+    await _preview_report(message, state, settings, text, extra_text=extra_text, bot=bot)
 
 
 async def _build_and_preview_assembly(
@@ -242,7 +262,7 @@ async def _build_and_preview_assembly(
         )
         return
     await state.clear()
-    await _preview_report(message, state, settings, text)
+    await _preview_report(message, state, settings, text, bot=bot)
 
 
 async def _build_and_preview_assembly_report(
@@ -280,7 +300,7 @@ async def _build_and_preview_assembly_report(
         )
         return
     await state.clear()
-    await _preview_report(message, state, settings, text)
+    await _preview_report(message, state, settings, text, bot=bot)
 
 
 class _AdminTagFilter(Filter):

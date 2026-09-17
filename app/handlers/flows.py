@@ -12,7 +12,7 @@ from app.access import keyboard_for_message
 from app.config import Settings
 from app.keyboards import do_confirm_keyboard
 from app.services.catalog import Catalog
-from app.services.do_report import build_do_report, send_do_report_chunks
+from app.services.do_report import build_do_report
 from app.services.invoice import (
     build_info_reply,
     build_invoice_reply,

@@ -34,8 +34,13 @@ class FoManagerRegistry:
                 if cleaned:
                     names.add(cleaned)
         logger.info("FO managers warm-up: %s unique names in FO projects", len(names))
-        for name in sorted(names):
-            await self.resolve(name)
+        semaphore = asyncio.Semaphore(5)
+
+        async def _warm(name: str) -> None:
+            async with semaphore:
+                await self.resolve(name)
+
+        await asyncio.gather(*(_warm(name) for name in sorted(names)))
         logger.info("FO managers warm-up finished, resolved %s entries", len(self._cache))
 
     async def resolve(self, manager_name: str) -> tuple[int, str]:
@@ -97,7 +102,6 @@ class FoManagerRegistry:
                     timeout_seconds=60,
                 )
                 users = result if isinstance(result, list) else []
-        best: dict[str, Any] | None = None
         for user in users:
             if not isinstance(user, dict):
                 continue
@@ -106,9 +110,8 @@ class FoManagerRegistry:
             full = _format_user_name(user)
             if _names_equivalent(full, manager_name) or _person_contains(full, manager_name):
                 return user
-            if best is None:
-                best = user
-        return best
+        # Не берём «первый попавшийся» результат поиска — только явное совпадение ФИО.
+        return None
 
 
 def _format_user_name(user: dict[str, Any]) -> str:
