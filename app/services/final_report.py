@@ -172,16 +172,36 @@ class FinalReportService:
         if manager_id != api_creator_id:
             auditor_ids = sorted(set(auditor_ids) | {manager_id})
         crm_items = await self._find_crm_task_bindings(project, store.name)
-        task = await self._create_task(
-            title=f'Финальный отчет - "{project} {store.name}"',
-            description=description,
-            responsible_id=responsible_id,
-            created_by_id=api_creator_id,
-            auditor_ids=auditor_ids,
-            group_id=group_id,
-            deadline=deadline,
-            crm_items=crm_items,
-        )
+        title = f'Финальный отчет - "{project} {store.name}"'
+        try:
+            task = await self._create_task(
+                title=title,
+                description=description,
+                responsible_id=responsible_id,
+                created_by_id=api_creator_id,
+                auditor_ids=auditor_ids,
+                group_id=group_id,
+                deadline=deadline,
+                crm_items=crm_items,
+            )
+        except FinalReportError as exc:
+            if not crm_items:
+                raise
+            logger.warning(
+                "FO task create with CRM %s failed (%s), retry without CRM",
+                crm_items,
+                exc,
+            )
+            task = await self._create_task(
+                title=title,
+                description=description,
+                responsible_id=responsible_id,
+                created_by_id=api_creator_id,
+                auditor_ids=auditor_ids,
+                group_id=group_id,
+                deadline=deadline,
+                crm_items=None,
+            )
         task_id = str(task.get("id") or task.get("ID") or "")
         if not task_id:
             raise FinalReportError("Задача создана, но Bitrix не вернул ID.")

@@ -83,11 +83,20 @@ class ReportStorage:
         async with self._lock:
             data = self._read()
             state = data.setdefault("fo_responsible_rr", {})
-            index = int(state.get("next_index") or 0) % len(pool)
+            try:
+                index = int(state.get("next_index") or 0) % len(pool)
+            except (TypeError, ValueError):
+                index = 0
             user_id = pool[index]
             state["next_index"] = (index + 1) % len(pool)
             state["last_user_id"] = user_id
-            self._write(data)
+            try:
+                self._write(data)
+            except OSError:
+                logger.exception(
+                    "FO round-robin: не удалось сохранить очередь в %s",
+                    self._path,
+                )
             logger.info(
                 "FO responsible round-robin -> %s (index %s/%s)",
                 user_id,
