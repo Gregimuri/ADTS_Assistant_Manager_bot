@@ -155,14 +155,19 @@ class FinalReportService:
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
         manager_id, manager_name = await self._managers.resolve(store.manager)
         api_creator_id = self._settings.bitrix_fo_fallback_creator_id
-        deadline = _deadline_tomorrow()
+        deadline = _deadline_for_fo()
         description = (
             f"Постановщик (менеджер ТТ): {manager_name}\n"
             f"Ссылка на диск: {folder_url}"
         )
         auditor_ids = sorted(set(self._settings.bitrix_fo_auditor_ids))
+        # Поляков (исполнитель) тоже должен оставаться наблюдателем.
+        auditor_ids = sorted(
+            set(auditor_ids) | {self._settings.bitrix_fo_responsible_id}
+        )
         if manager_id != api_creator_id:
             auditor_ids = sorted(set(auditor_ids) | {manager_id})
+        crm_items = await self._find_crm_task_bindings(project, store.name)
         task = await self._create_task(
             title=f'Финальный отчет - "{project} {store.name}"',
             description=description,
@@ -171,6 +176,7 @@ class FinalReportService:
             auditor_ids=auditor_ids,
             group_id=group_id,
             deadline=deadline,
+            crm_items=crm_items,
         )
         task_id = str(task.get("id") or task.get("ID") or "")
         if not task_id:
@@ -399,6 +405,7 @@ class FinalReportService:
         auditor_ids: list[int],
         group_id: int,
         deadline: str,
+        crm_items: list[str] | None = None,
     ) -> dict[str, Any]:
         fields: dict[str, Any] = {
             "TITLE": title,
@@ -410,10 +417,12 @@ class FinalReportService:
             "DEADLINE": deadline,
             "PRIORITY": 1,
         }
-        skip = {responsible_id, created_by_id}
-        auditors = [user_id for user_id in auditor_ids if user_id not in skip]
+        # Постановщика не дублируем в наблюдателях; исполнителя оставляем.
+        auditors = [user_id for user_id in auditor_ids if user_id != created_by_id]
         if auditors:
             fields["AUDITORS"] = auditors
+        if crm_items:
+            fields["UF_CRM_TASK"] = crm_items
         result = await self._call(
             "tasks.task.add",
             {"fields": fields},
@@ -425,6 +434,60 @@ class FinalReportService:
                 return task
             return result
         raise FinalReportError("Не удалось создать задачу в Bitrix.")
+
+    async def _find_crm_task_bindings(self, project: str, store_name: str) -> list[str]:
+        """Ищет CRM-объект ТТ (обычно SPA T408_*) по названию через задачи Bitrix."""
+        needles = _crm_search_needles(project, store_name)
+        counts: dict[str, int] = {}
+        for needle in needles:
+            try:
+                result = await self._call(
+                    "tasks.task.list",
+                    {
+                        "select": ["ID", "TITLE", "UF_CRM_TASK"],
+                        "filter": {"%TITLE": needle},
+                        "order": {"ID": "DESC"},
+                        "start": 0,
+                    },
+                )
+            except FinalReportError:
+                logger.exception("CRM lookup via tasks failed for %r", needle)
+                continue
+            tasks = result.get("tasks") if isinstance(result, dict) else result
+            if not isinstance(tasks, list):
+                continue
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                title = str(task.get("title") or task.get("TITLE") or "")
+                if not _title_matches_store(title, project, store_name):
+                    continue
+                raw = task.get("ufCrmTask") or task.get("UF_CRM_TASK") or []
+                if not isinstance(raw, list):
+                    continue
+                for item in raw:
+                    binding = str(item or "").strip().upper()
+                    if not binding:
+                        continue
+                    counts[binding] = counts.get(binding, 0) + 1
+        if not counts:
+            logger.info(
+                "CRM object for project=%s store=%r not found",
+                project,
+                store_name,
+            )
+            return []
+        # Предпочитаем смарт-процесс T408_*, как в существующих ФО.
+        spa = {key: value for key, value in counts.items() if key.startswith("T408_")}
+        pool = spa or counts
+        best = sorted(pool.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        logger.info(
+            "CRM object for project=%s store=%r -> %s",
+            project,
+            store_name,
+            best,
+        )
+        return [best]
 
     async def _call(
         self,
@@ -451,6 +514,35 @@ def _fo_upload_folder_name(project: str, store_name: str) -> str:
 
 def _name_tokens(value: str) -> list[str]:
     return [part for part in value.split() if part.strip()]
+
+
+def _crm_search_needles(project: str, store_name: str) -> list[str]:
+    store = store_name.strip()
+    needles = [store, f"{project} {store}".strip()]
+    parts = _name_tokens(store)
+    if len(parts) >= 2 and parts[0].casefold() == project.casefold():
+        needles.append(" ".join(parts[1:]))
+    unique: list[str] = []
+    for needle in needles:
+        item = needle.strip()
+        if item and item not in unique:
+            unique.append(item)
+    return unique
+
+
+def _title_matches_store(title: str, project: str, store_name: str) -> bool:
+    text = title.casefold()
+    store = store_name.casefold().strip()
+    if not store:
+        return False
+    if store in text:
+        return True
+    parts = _name_tokens(store_name)
+    if len(parts) >= 2 and parts[0].casefold() == project.casefold():
+        bare = " ".join(parts[1:]).casefold()
+        if bare and bare in text:
+            return True
+    return False
 
 
 def _tt_folder_tokens_match(folder_name: str, tt_name: str) -> bool:
@@ -498,8 +590,11 @@ def _disk_folder_id(folder: dict[str, Any]) -> str:
     )
 
 
-def _deadline_tomorrow() -> str:
-    day = datetime.now(_MSK).date() + timedelta(days=1)
+def _deadline_for_fo() -> str:
+    """До 16:30 МСК — сегодня 18:00; после 16:30 — завтра 18:00."""
+    now = datetime.now(_MSK)
+    cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
+    day = now.date() if now <= cutoff else (now.date() + timedelta(days=1))
     return f"{day.isoformat()}T18:00:00+03:00"
 
 
