@@ -1,6 +1,11 @@
 services:
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        # Если pypi.org режет соединение с сервера — сборка сама попробует Yandex/Tsinghua.
+        # Явно: PIP_INDEX_URL=https://mirror.yandex.ru/mirrors/pypi/simple/
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     image: adts-assistant-manager:latest
     env_file:
       - .env
