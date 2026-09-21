@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     )
     bitrix_fo_fallback_creator_id: int = 401
     bitrix_fo_auditor_ids: _CsvIntSet = frozenset({281, 203, 201, 401, 641})
+    # SPA «Объекты» в портале: crm.item entityTypeId=1032, в UF_CRM_TASK — префикс T408_
+    bitrix_fo_crm_entity_type_id: int = 1032
+    bitrix_fo_crm_binding_prefix: str = "T408"
     report_data_path: str = "data/reports.json"
     scheduled_exit_projects: str = "ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО"
     do_order_horizon_days: int = 17

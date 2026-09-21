@@ -124,8 +124,10 @@ python -m app.main
 | `ADMIN_REPORT_CHAT_ID` | Группа для админ-отчётов (по умолчанию `-5278414891`) |
 | `BITRIX_WEBHOOK_URL` | Webhook Bitrix24 (нужны права `task`, `user`, `disk`) |
 | `BITRIX_FO_RESPONSIBLE_IDS` | Исполнители ФО по кругу: Андреевских → Корчагин → Белов (`201,203,641`) |
-| `BITRIX_FO_FALLBACK_CREATOR_ID` | Постановщик по умолчанию (Титков Григорий) |
+| `BITRIX_FO_FALLBACK_CREATOR_ID` | Webhook/Титков; запасной постановщик, если Bitrix не даёт выставить менеджера ТТ |
 | `BITRIX_FO_AUDITOR_IDS` | Наблюдатели задачи ФО (Поляков, Корчагин, Андреевских, Титков, Белов) |
+| `BITRIX_FO_CRM_ENTITY_TYPE_ID` | SPA «Объекты» для привязки CRM (`1032`) |
+| `BITRIX_FO_CRM_BINDING_PREFIX` | Префикс в `UF_CRM_TASK` на портале (`T408`) |
 | `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`, том `bot-data` в Docker) |
 | `SCHEDULED_EXIT_PROJECTS` | Проекты в автоматическом плане/отчёте выходов (через запятую) |
 | `DO_ORDER_HORIZON_DAYS` | Горизонт заказа для регионов, дней (17) |

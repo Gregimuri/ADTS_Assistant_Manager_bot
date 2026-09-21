@@ -157,7 +157,9 @@ class FinalReportService:
 
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
         manager_id, manager_name = await self._managers.resolve(store.manager)
-        api_creator_id = self._settings.bitrix_fo_fallback_creator_id
+        api_user_id = self._settings.bitrix_fo_fallback_creator_id  # webhook = Титков
+        # Постановщик в карточке задачи — менеджер ТТ; API вызывает Титков.
+        created_by_id = manager_id if manager_id > 0 else api_user_id
         deadline = _deadline_for_fo()
         description = (
             f"Постановщик (менеджер ТТ): {manager_name}\n"
@@ -167,9 +169,9 @@ class FinalReportService:
         auditor_ids = sorted(
             set(self._settings.bitrix_fo_auditor_ids)
             | set(self._settings.bitrix_fo_responsible_ids)
-            | {responsible_id}
+            | {responsible_id, api_user_id}
         )
-        if manager_id != api_creator_id:
+        if manager_id > 0 and manager_id != created_by_id:
             auditor_ids = sorted(set(auditor_ids) | {manager_id})
         crm_items = await self._find_crm_task_bindings(project, store.name)
         title = f'Финальный отчет - "{project} {store.name}"'
@@ -178,30 +180,78 @@ class FinalReportService:
                 title=title,
                 description=description,
                 responsible_id=responsible_id,
-                created_by_id=api_creator_id,
+                created_by_id=created_by_id,
                 auditor_ids=auditor_ids,
                 group_id=group_id,
                 deadline=deadline,
                 crm_items=crm_items,
             )
         except FinalReportError as exc:
-            if not crm_items:
+            text = str(exc).casefold()
+            privilege = (
+                "privileges" in text
+                or "access_denied" in text
+                or "прав" in text
+                or "недостаточно" in text
+            )
+            # Webhook Титкова часто не может выставить чужого постановщика — повторяем от его имени.
+            if privilege and created_by_id != api_user_id:
+                logger.warning(
+                    "FO CREATED_BY=%s denied (%s), fallback to Titkov %s",
+                    created_by_id,
+                    exc,
+                    api_user_id,
+                )
+                created_by_id = api_user_id
+                if manager_id > 0:
+                    auditor_ids = sorted(set(auditor_ids) | {manager_id})
+                try:
+                    task = await self._create_task(
+                        title=title,
+                        description=description,
+                        responsible_id=responsible_id,
+                        created_by_id=created_by_id,
+                        auditor_ids=auditor_ids,
+                        group_id=group_id,
+                        deadline=deadline,
+                        crm_items=crm_items,
+                    )
+                except FinalReportError as crm_exc:
+                    if not crm_items:
+                        raise
+                    logger.warning(
+                        "FO task create with CRM %s failed (%s), retry without CRM",
+                        crm_items,
+                        crm_exc,
+                    )
+                    task = await self._create_task(
+                        title=title,
+                        description=description,
+                        responsible_id=responsible_id,
+                        created_by_id=created_by_id,
+                        auditor_ids=auditor_ids,
+                        group_id=group_id,
+                        deadline=deadline,
+                        crm_items=None,
+                    )
+            elif crm_items:
+                logger.warning(
+                    "FO task create with CRM %s failed (%s), retry without CRM",
+                    crm_items,
+                    exc,
+                )
+                task = await self._create_task(
+                    title=title,
+                    description=description,
+                    responsible_id=responsible_id,
+                    created_by_id=created_by_id,
+                    auditor_ids=auditor_ids,
+                    group_id=group_id,
+                    deadline=deadline,
+                    crm_items=None,
+                )
+            else:
                 raise
-            logger.warning(
-                "FO task create with CRM %s failed (%s), retry without CRM",
-                crm_items,
-                exc,
-            )
-            task = await self._create_task(
-                title=title,
-                description=description,
-                responsible_id=responsible_id,
-                created_by_id=api_creator_id,
-                auditor_ids=auditor_ids,
-                group_id=group_id,
-                deadline=deadline,
-                crm_items=None,
-            )
         task_id = str(task.get("id") or task.get("ID") or "")
         if not task_id:
             raise FinalReportError("Задача создана, но Bitrix не вернул ID.")
@@ -476,67 +526,79 @@ class FinalReportService:
         raise FinalReportError("Не удалось создать задачу в Bitrix.")
 
     async def _find_crm_task_bindings(self, project: str, store_name: str) -> list[str]:
-        """Ищет CRM-объект ТТ (обычно SPA T408_*) по названию через задачи Bitrix."""
+        """Ищет CRM-объект ТТ в SPA (не через чужие задачи — там часто чужие привязки)."""
+        entity_type_id = int(self._settings.bitrix_fo_crm_entity_type_id)
+        prefix = (self._settings.bitrix_fo_crm_binding_prefix or f"T{entity_type_id}").strip()
+        if prefix.endswith("_"):
+            prefix = prefix[:-1]
         needles = _crm_search_needles(project, store_name)
-        counts: dict[str, int] = {}
+        best_id: int | None = None
+        best_score = 0
+        best_title = ""
         for needle in needles:
             try:
                 result = await bitrix_call(
                     self._settings,
-                    "tasks.task.list",
+                    "crm.item.list",
                     {
-                        "select": ["ID", "TITLE", "UF_CRM_TASK"],
-                        "filter": {"%TITLE": needle},
-                        "order": {"ID": "DESC"},
+                        "entityTypeId": entity_type_id,
+                        "select": ["id", "title"],
+                        "filter": {"%title": needle},
+                        "order": {"id": "DESC"},
                         "start": 0,
                     },
-                    timeout_seconds=30,
+                    timeout_seconds=45,
+                    json_body=True,
                 )
             except RuntimeError:
-                logger.exception("CRM lookup via tasks failed for %r", needle)
+                logger.exception(
+                    "CRM SPA lookup failed entityTypeId=%s needle=%r",
+                    entity_type_id,
+                    needle,
+                )
                 continue
-            tasks = result.get("tasks") if isinstance(result, dict) else result
-            if not isinstance(tasks, list):
+            items = result.get("items") if isinstance(result, dict) else result
+            if not isinstance(items, list):
                 continue
-            for task in tasks:
-                if not isinstance(task, dict):
+            for item in items:
+                if not isinstance(item, dict):
                     continue
-                title = str(task.get("title") or task.get("TITLE") or "")
-                if not _title_matches_store(title, project, store_name):
+                title = str(item.get("title") or item.get("TITLE") or "")
+                score = _crm_item_match_score(title, project, store_name)
+                if score <= 0:
                     continue
-                raw = task.get("ufCrmTask") or task.get("UF_CRM_TASK") or []
-                if not isinstance(raw, list):
+                try:
+                    item_id = int(item.get("id") or item.get("ID") or 0)
+                except (TypeError, ValueError):
                     continue
-                for item in raw:
-                    binding = str(item or "").strip().upper()
-                    if not binding:
-                        continue
-                    counts[binding] = counts.get(binding, 0) + 1
-                    if binding.startswith("T408_"):
-                        logger.info(
-                            "CRM object for project=%s store=%r -> %s",
-                            project,
-                            store_name,
-                            binding,
-                        )
-                        return [binding]
-        if not counts:
+                if item_id <= 0:
+                    continue
+                if score > best_score or (
+                    score == best_score and (best_id is None or item_id > best_id)
+                ):
+                    best_score = score
+                    best_id = item_id
+                    best_title = title
+            if best_score >= 1000:
+                break
+        if best_id is None:
             logger.info(
-                "CRM object for project=%s store=%r not found",
+                "CRM object for project=%s store=%r not found in SPA %s",
                 project,
                 store_name,
+                entity_type_id,
             )
             return []
-        spa = {key: value for key, value in counts.items() if key.startswith("T408_")}
-        pool = spa or counts
-        best = sorted(pool.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        binding = f"{prefix}_{best_id}"
         logger.info(
-            "CRM object for project=%s store=%r -> %s",
+            "CRM object for project=%s store=%r -> %s (%r, score=%s)",
             project,
             store_name,
-            best,
+            binding,
+            best_title,
+            best_score,
         )
-        return [best]
+        return [binding]
 
     async def _call(
         self,
@@ -579,19 +641,42 @@ def _crm_search_needles(project: str, store_name: str) -> list[str]:
     return unique
 
 
-def _title_matches_store(title: str, project: str, store_name: str) -> bool:
-    text = title.casefold()
-    store = store_name.casefold().strip()
-    if not store:
-        return False
-    if store in text:
-        return True
+def _normalize_crm_item_title(title: str) -> str:
+    text = (title or "").strip().casefold()
+    # « Пороховской (Шелфбанеры)» → «пороховской»
+    text = re.sub(r"\s*\([^)]*\)\s*$", "", text).strip()
+    return text
+
+
+def _store_name_variants(project: str, store_name: str) -> list[str]:
+    store = store_name.strip().casefold()
+    variants = [store]
     parts = _name_tokens(store_name)
     if len(parts) >= 2 and parts[0].casefold() == project.casefold():
-        bare = " ".join(parts[1:]).casefold()
-        if bare and bare in text:
-            return True
-    return False
+        bare = " ".join(parts[1:]).casefold().strip()
+        if bare and bare not in variants:
+            variants.append(bare)
+    return variants
+
+
+def _crm_item_match_score(title: str, project: str, store_name: str) -> int:
+    """Строгое соответствие CRM-объекта ТТ: без чужих ТТ из общих задач."""
+    base = _normalize_crm_item_title(title)
+    if not base:
+        return 0
+    variants = _store_name_variants(project, store_name)
+    for variant in variants:
+        if not variant:
+            continue
+        if base == variant:
+            return 1000
+        if base.startswith(f"{variant} ") or base.endswith(f" {variant}"):
+            return 800
+        # Целое слово/фраза, не кусок чужого названия.
+        pattern = rf"(?:^|[\s\-_/\"«]){re.escape(variant)}(?:$|[\s\-_/\"»,.(])"
+        if re.search(pattern, base):
+            return 500
+    return 0
 
 
 def _tt_folder_tokens_match(folder_name: str, tt_name: str) -> bool:
