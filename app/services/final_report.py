@@ -746,10 +746,18 @@ def _disk_folder_id(folder: dict[str, Any]) -> str:
 
 
 def _deadline_for_fo() -> str:
-    """До 16:30 МСК — сегодня 18:00; после 16:30 — завтра 18:00."""
+    """До 16:30 МСК — сегодня 18:00; после 16:30 — завтра 18:00.
+
+    Если крайний срок выпадает на субботу или воскресенье — перенос на
+    понедельник 18:00 МСК.
+    """
     now = datetime.now(_MSK)
     cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
     day = now.date() if now <= cutoff else (now.date() + timedelta(days=1))
+    if day.weekday() == 5:  # суббота → понедельник
+        day += timedelta(days=2)
+    elif day.weekday() == 6:  # воскресенье → понедельник
+        day += timedelta(days=1)
     return f"{day.isoformat()}T18:00:00+03:00"
 
 
