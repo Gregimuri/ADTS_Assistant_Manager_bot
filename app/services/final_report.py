@@ -158,7 +158,7 @@ class FinalReportService:
         folder_url = _FOLDER_LINK.format(folder_id=folder_id)
         manager_id, manager_name = await self._managers.resolve(store.manager)
         api_user_id = self._settings.bitrix_fo_fallback_creator_id  # webhook = Титков
-        # Постановщик в карточке задачи — менеджер ТТ; API вызывает Титков.
+        # Постановщик в карточке — менеджер ТТ (выставляется через update после создания).
         created_by_id = manager_id if manager_id > 0 else api_user_id
         deadline = _deadline_for_fo()
         description = (
@@ -171,8 +171,6 @@ class FinalReportService:
             | set(self._settings.bitrix_fo_responsible_ids)
             | {responsible_id, api_user_id}
         )
-        if manager_id > 0 and manager_id != created_by_id:
-            auditor_ids = sorted(set(auditor_ids) | {manager_id})
         crm_items = await self._find_crm_task_bindings(project, store.name)
         title = f'Финальный отчет - "{project} {store.name}"'
         try:
@@ -187,71 +185,23 @@ class FinalReportService:
                 crm_items=crm_items,
             )
         except FinalReportError as exc:
-            text = str(exc).casefold()
-            privilege = (
-                "privileges" in text
-                or "access_denied" in text
-                or "прав" in text
-                or "недостаточно" in text
-            )
-            # Webhook Титкова часто не может выставить чужого постановщика — повторяем от его имени.
-            if privilege and created_by_id != api_user_id:
-                logger.warning(
-                    "FO CREATED_BY=%s denied (%s), fallback to Titkov %s",
-                    created_by_id,
-                    exc,
-                    api_user_id,
-                )
-                created_by_id = api_user_id
-                if manager_id > 0:
-                    auditor_ids = sorted(set(auditor_ids) | {manager_id})
-                try:
-                    task = await self._create_task(
-                        title=title,
-                        description=description,
-                        responsible_id=responsible_id,
-                        created_by_id=created_by_id,
-                        auditor_ids=auditor_ids,
-                        group_id=group_id,
-                        deadline=deadline,
-                        crm_items=crm_items,
-                    )
-                except FinalReportError as crm_exc:
-                    if not crm_items:
-                        raise
-                    logger.warning(
-                        "FO task create with CRM %s failed (%s), retry without CRM",
-                        crm_items,
-                        crm_exc,
-                    )
-                    task = await self._create_task(
-                        title=title,
-                        description=description,
-                        responsible_id=responsible_id,
-                        created_by_id=created_by_id,
-                        auditor_ids=auditor_ids,
-                        group_id=group_id,
-                        deadline=deadline,
-                        crm_items=None,
-                    )
-            elif crm_items:
-                logger.warning(
-                    "FO task create with CRM %s failed (%s), retry without CRM",
-                    crm_items,
-                    exc,
-                )
-                task = await self._create_task(
-                    title=title,
-                    description=description,
-                    responsible_id=responsible_id,
-                    created_by_id=created_by_id,
-                    auditor_ids=auditor_ids,
-                    group_id=group_id,
-                    deadline=deadline,
-                    crm_items=None,
-                )
-            else:
+            if not crm_items:
                 raise
+            logger.warning(
+                "FO task create with CRM %s failed (%s), retry without CRM",
+                crm_items,
+                exc,
+            )
+            task = await self._create_task(
+                title=title,
+                description=description,
+                responsible_id=responsible_id,
+                created_by_id=created_by_id,
+                auditor_ids=auditor_ids,
+                group_id=group_id,
+                deadline=deadline,
+                crm_items=None,
+            )
         task_id = str(task.get("id") or task.get("ID") or "")
         if not task_id:
             raise FinalReportError("Задача создана, но Bitrix не вернул ID.")
@@ -497,34 +447,105 @@ class FinalReportService:
         deadline: str,
         crm_items: list[str] | None = None,
     ) -> dict[str, Any]:
-        fields: dict[str, Any] = {
-            "TITLE": title,
-            "DESCRIPTION": description,
-            "DESCRIPTION_IN_BBCODE": "N",
-            "RESPONSIBLE_ID": responsible_id,
-            "CREATED_BY": created_by_id,
-            "GROUP_ID": group_id,
-            "DEADLINE": deadline,
-            "PRIORITY": 1,
-        }
-        # Постановщика не дублируем в наблюдателях; исполнителя оставляем.
-        auditors = [user_id for user_id in auditor_ids if user_id != created_by_id]
-        if auditors:
-            fields["AUDITORS"] = auditors
-        if crm_items:
-            fields["UF_CRM_TASK"] = crm_items
-        result = await self._call(
+        """Создаёт задачу ФО.
+
+        Bitrix не даёт webhook'у 401 сразу указать чужого CREATED_BY и чужого
+        исполнителя. Рабочая схема: создать от Титкова (он же временно исполнитель)
+        → сменить постановщика на менеджера ТТ → назначить реального исполнителя,
+        проект, наблюдателей и CRM.
+        """
+        api_user_id = self._settings.bitrix_fo_fallback_creator_id
+        originator_id = created_by_id if created_by_id > 0 else api_user_id
+
+        seed = await self._call(
             "tasks.task.add",
-            {"fields": fields},
+            {
+                "fields": {
+                    "TITLE": title,
+                    "DESCRIPTION": description,
+                    "DESCRIPTION_IN_BBCODE": "N",
+                    "RESPONSIBLE_ID": api_user_id,
+                    "CREATED_BY": api_user_id,
+                    "DEADLINE": deadline,
+                    "PRIORITY": 1,
+                }
+            },
             json_body=True,
         )
+        task = seed.get("task") if isinstance(seed, dict) else None
+        if not isinstance(task, dict):
+            raise FinalReportError("Не удалось создать задачу в Bitrix.")
+        task_id = str(task.get("id") or task.get("ID") or "")
+        if not task_id:
+            raise FinalReportError("Задача создана, но Bitrix не вернул ID.")
+
+        if originator_id != api_user_id:
+            try:
+                await self._call(
+                    "tasks.task.update",
+                    {"taskId": task_id, "fields": {"CREATED_BY": originator_id}},
+                    json_body=True,
+                )
+            except FinalReportError as exc:
+                logger.warning(
+                    "FO cannot set CREATED_BY=%s (%s), keep Titkov %s",
+                    originator_id,
+                    exc,
+                    api_user_id,
+                )
+                originator_id = api_user_id
+
+        auditors = [user_id for user_id in auditor_ids if user_id != originator_id]
+        finalize: dict[str, Any] = {
+            "RESPONSIBLE_ID": responsible_id,
+            "GROUP_ID": group_id,
+        }
+        if auditors:
+            finalize["AUDITORS"] = auditors
+        if crm_items:
+            finalize["UF_CRM_TASK"] = crm_items
+        try:
+            result = await self._call(
+                "tasks.task.update",
+                {"taskId": task_id, "fields": finalize},
+                json_body=True,
+            )
+        except FinalReportError:
+            if not crm_items:
+                raise
+            finalize.pop("UF_CRM_TASK", None)
+            logger.warning(
+                "FO finalize with CRM %s failed, retry without CRM", crm_items
+            )
+            result = await self._call(
+                "tasks.task.update",
+                {"taskId": task_id, "fields": finalize},
+                json_body=True,
+            )
         if isinstance(result, dict):
-            task = result.get("task")
+            updated = result.get("task")
+            if isinstance(updated, dict):
+                return updated
+        got = await self._call(
+            "tasks.task.get",
+            {
+                "taskId": task_id,
+                "select": [
+                    "ID",
+                    "TITLE",
+                    "CREATED_BY",
+                    "RESPONSIBLE_ID",
+                    "GROUP_ID",
+                    "UF_CRM_TASK",
+                    "AUDITORS",
+                ],
+            },
+        )
+        if isinstance(got, dict):
+            task = got.get("task")
             if isinstance(task, dict):
                 return task
-            return result
-        raise FinalReportError("Не удалось создать задачу в Bitrix.")
-
+        return {"id": task_id}
     async def _find_crm_task_bindings(self, project: str, store_name: str) -> list[str]:
         """Ищет CRM-объект ТТ в SPA (не через чужие задачи — там часто чужие привязки)."""
         entity_type_id = int(self._settings.bitrix_fo_crm_entity_type_id)
