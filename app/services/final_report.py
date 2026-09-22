@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import json
 import logging
 import re
@@ -449,9 +451,9 @@ class FinalReportService:
     ) -> dict[str, Any]:
         """Создаёт задачу ФО.
 
-        Bitrix не даёт webhook'у 401 сразу указать чужого CREATED_BY и чужого
-        исполнителя. Рабочая схема: создать от Титкова (он же временно исполнитель)
-        → сменить постановщика на менеджера ТТ → назначить реального исполнителя,
+        Bitrix не даёт webhook'у 401 сразу указать чужого CREATED_BY.
+        Схема: создать от Титкова (он же временно исполнитель) → сменить
+        постановщика на менеджера ТТ (с проверкой) → назначить исполнителя,
         проект, наблюдателей и CRM.
         """
         api_user_id = self._settings.bitrix_fo_fallback_creator_id
@@ -480,20 +482,9 @@ class FinalReportService:
             raise FinalReportError("Задача создана, но Bitrix не вернул ID.")
 
         if originator_id != api_user_id:
-            try:
-                await self._call(
-                    "tasks.task.update",
-                    {"taskId": task_id, "fields": {"CREATED_BY": originator_id}},
-                    json_body=True,
-                )
-            except FinalReportError as exc:
-                logger.warning(
-                    "FO cannot set CREATED_BY=%s (%s), keep Titkov %s",
-                    originator_id,
-                    exc,
-                    api_user_id,
-                )
-                originator_id = api_user_id
+            originator_id = await self._set_task_originator(
+                task_id, originator_id, api_user_id
+            )
 
         auditors = [user_id for user_id in auditor_ids if user_id != originator_id]
         finalize: dict[str, Any] = {
@@ -512,6 +503,8 @@ class FinalReportService:
             )
         except FinalReportError:
             if not crm_items:
+                with contextlib.suppress(FinalReportError):
+                    await self._call("tasks.task.delete", {"taskId": task_id})
                 raise
             finalize.pop("UF_CRM_TASK", None)
             logger.warning(
@@ -525,6 +518,43 @@ class FinalReportService:
         if isinstance(result, dict):
             updated = result.get("task")
             if isinstance(updated, dict):
+                # Финальная проверка постановщика после всех update.
+                actual = str(updated.get("createdBy") or updated.get("CREATED_BY") or "")
+                if originator_id != api_user_id and actual != str(originator_id):
+                    logger.warning(
+                        "FO task %s originator after finalize is %s, want %s — retry",
+                        task_id,
+                        actual,
+                        originator_id,
+                    )
+                    # После смены исполнителя Bitrix часто запрещает менять постановщика.
+                    # Возвращаем себе исполнителя, меняем постановщика, снова финализируем.
+                    await self._restore_originator_after_finalize(
+                        task_id,
+                        originator_id=originator_id,
+                        api_user_id=api_user_id,
+                        responsible_id=responsible_id,
+                        group_id=group_id,
+                        auditors=auditors,
+                        crm_items=crm_items if "UF_CRM_TASK" in finalize else None,
+                    )
+                    got = await self._call(
+                        "tasks.task.get",
+                        {
+                            "taskId": task_id,
+                            "select": [
+                                "ID",
+                                "TITLE",
+                                "CREATED_BY",
+                                "RESPONSIBLE_ID",
+                                "GROUP_ID",
+                                "UF_CRM_TASK",
+                                "AUDITORS",
+                            ],
+                        },
+                    )
+                    if isinstance(got, dict) and isinstance(got.get("task"), dict):
+                        return got["task"]
                 return updated
         got = await self._call(
             "tasks.task.get",
@@ -546,6 +576,105 @@ class FinalReportService:
             if isinstance(task, dict):
                 return task
         return {"id": task_id}
+
+    async def _set_task_originator(
+        self, task_id: str, originator_id: int, api_user_id: int
+    ) -> int:
+        """Меняет постановщика, пока задача ещё на Титкове-исполнителе."""
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                # На всякий случай возвращаем исполнителя себе — иначе Bitrix
+                # отвечает «нет доступа к редактированию».
+                await self._call(
+                    "tasks.task.update",
+                    {
+                        "taskId": task_id,
+                        "fields": {
+                            "RESPONSIBLE_ID": api_user_id,
+                            "CREATED_BY": originator_id,
+                        },
+                    },
+                    json_body=True,
+                )
+            except FinalReportError as exc:
+                last_error = exc
+                logger.warning(
+                    "FO set CREATED_BY=%s attempt %s failed: %s",
+                    originator_id,
+                    attempt,
+                    exc,
+                )
+                await asyncio.sleep(0.4 * attempt)
+                continue
+            got = await self._call(
+                "tasks.task.get",
+                {"taskId": task_id, "select": ["ID", "CREATED_BY", "RESPONSIBLE_ID"]},
+            )
+            task = got.get("task") if isinstance(got, dict) else None
+            actual = str((task or {}).get("createdBy") or (task or {}).get("CREATED_BY") or "")
+            if actual == str(originator_id):
+                logger.info("FO task %s originator set to %s", task_id, originator_id)
+                return originator_id
+            logger.warning(
+                "FO task %s CREATED_BY still %s after update to %s (attempt %s)",
+                task_id,
+                actual,
+                originator_id,
+                attempt,
+            )
+            await asyncio.sleep(0.4 * attempt)
+        logger.error(
+            "FO cannot set CREATED_BY=%s on task %s (%s), keep Titkov %s",
+            originator_id,
+            task_id,
+            last_error,
+            api_user_id,
+        )
+        return api_user_id
+
+    async def _restore_originator_after_finalize(
+        self,
+        task_id: str,
+        *,
+        originator_id: int,
+        api_user_id: int,
+        responsible_id: int,
+        group_id: int,
+        auditors: list[int],
+        crm_items: list[str] | None,
+    ) -> None:
+        """Если после финализации постановщик сбросился — повторяем смену."""
+        try:
+            await self._call(
+                "tasks.task.update",
+                {
+                    "taskId": task_id,
+                    "fields": {"RESPONSIBLE_ID": api_user_id},
+                },
+                json_body=True,
+            )
+            await self._set_task_originator(task_id, originator_id, api_user_id)
+            fields: dict[str, Any] = {
+                "RESPONSIBLE_ID": responsible_id,
+                "GROUP_ID": group_id,
+            }
+            if auditors:
+                fields["AUDITORS"] = auditors
+            if crm_items:
+                fields["UF_CRM_TASK"] = crm_items
+            await self._call(
+                "tasks.task.update",
+                {"taskId": task_id, "fields": fields},
+                json_body=True,
+            )
+        except FinalReportError:
+            logger.exception(
+                "FO restore originator failed for task %s (want %s)",
+                task_id,
+                originator_id,
+            )
+
     async def _find_crm_task_bindings(self, project: str, store_name: str) -> list[str]:
         """Ищет CRM-объект ТТ в SPA (не через чужие задачи — там часто чужие привязки)."""
         entity_type_id = int(self._settings.bitrix_fo_crm_entity_type_id)
@@ -602,12 +731,15 @@ class FinalReportService:
                     best_title = title
             if best_score >= 1000:
                 break
-        if best_id is None:
+        if best_id is None or best_score < 1000:
             logger.info(
-                "CRM object for project=%s store=%r not found in SPA %s",
+                "CRM object for project=%s store=%r not found as exact SPA title "
+                "(best_score=%s best=%r id=%s)",
                 project,
                 store_name,
-                entity_type_id,
+                best_score,
+                best_title,
+                best_id,
             )
             return []
         binding = f"{prefix}_{best_id}"
@@ -681,22 +813,13 @@ def _store_name_variants(project: str, store_name: str) -> list[str]:
 
 
 def _crm_item_match_score(title: str, project: str, store_name: str) -> int:
-    """Строгое соответствие CRM-объекта ТТ: без чужих ТТ из общих задач."""
+    """Только точное имя ТТ (без «Аптека Лаборатория» вместо «Лаборатория»)."""
     base = _normalize_crm_item_title(title)
     if not base:
         return 0
-    variants = _store_name_variants(project, store_name)
-    for variant in variants:
-        if not variant:
-            continue
-        if base == variant:
+    for variant in _store_name_variants(project, store_name):
+        if variant and base == variant:
             return 1000
-        if base.startswith(f"{variant} ") or base.endswith(f" {variant}"):
-            return 800
-        # Целое слово/фраза, не кусок чужого названия.
-        pattern = rf"(?:^|[\s\-_/\"«]){re.escape(variant)}(?:$|[\s\-_/\"»,.(])"
-        if re.search(pattern, base):
-            return 500
     return 0
 
 
