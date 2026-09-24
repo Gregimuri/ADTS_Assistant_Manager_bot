@@ -24,6 +24,7 @@ from app.handlers import (
     info_tt_router,
     menu_router,
     region_transfer_router,
+    shb_plan_router,
     start_router,
     to_invoice_router,
 )
@@ -37,7 +38,7 @@ from app.services.fo_managers import FoManagerRegistry
 from app.services.region_transfer import RegionTransferService
 from app.services.report_storage import ReportStorage
 from app.services.sheets import SheetsClient
-
+from app.services.shb_plan_tasks import ShbPlanTasksService, run_shb_plan_scheduler
 logger = logging.getLogger(__name__)
 
 WEBHOOK_PATH = "/webhook"
@@ -89,6 +90,7 @@ def _build_dispatcher(
     exit_reports: ExitReportsService,
     assembly_reports: AssemblyReportsService,
     final_report: FinalReportService,
+    shb_plan_tasks: ShbPlanTasksService,
     settings: Settings,
 ) -> Dispatcher:
     # Изоляция событий: альбомы ФО не затирают друг друга в FSM.
@@ -96,6 +98,7 @@ def _build_dispatcher(
     dp.include_routers(
         start_router,
         admin_reports_router,
+        shb_plan_router,
         do_report_router,
         region_transfer_router,
         final_report_router,
@@ -111,6 +114,7 @@ def _build_dispatcher(
         exit_reports=exit_reports,
         assembly_reports=assembly_reports,
         final_report=final_report,
+        shb_plan_tasks=shb_plan_tasks,
     )
     return dp
 
@@ -175,6 +179,7 @@ async def run() -> None:
     assembly_reports = AssemblyReportsService(settings, report_storage)
     fo_managers = FoManagerRegistry(settings)
     final_report = FinalReportService(settings, catalog, fo_managers, report_storage)
+    shb_plan_tasks = ShbPlanTasksService(settings)
     fo_managers_task = asyncio.create_task(fo_managers.warm_up(catalog, FO_PROJECTS))
     bot = create_bot(settings)
     if settings.telegram_local_api_url.strip():
@@ -185,11 +190,15 @@ async def run() -> None:
         exit_reports,
         assembly_reports,
         final_report,
+        shb_plan_tasks,
         settings,
     )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
     admin_scheduler_task = asyncio.create_task(
         run_admin_report_scheduler(bot, exit_reports, assembly_reports, settings)
+    )
+    shb_plan_scheduler_task = asyncio.create_task(
+        run_shb_plan_scheduler(bot, shb_plan_tasks)
     )
 
     try:
@@ -204,12 +213,15 @@ async def run() -> None:
         fo_managers_task.cancel()
         admin_scheduler_task.cancel()
         scheduler_task.cancel()
+        shb_plan_scheduler_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await fo_managers_task
         with contextlib.suppress(asyncio.CancelledError):
             await admin_scheduler_task
         with contextlib.suppress(asyncio.CancelledError):
             await scheduler_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await shb_plan_scheduler_task
         await bot.session.close()
 
 

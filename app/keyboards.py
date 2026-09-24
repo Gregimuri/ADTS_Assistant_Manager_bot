@@ -11,6 +11,7 @@ BTN_EXIT_PLAN = "План кол-во выходов"
 BTN_EXIT_REPORT = "Отчет кол-во выходов"
 BTN_ASSEMBLY = "Сборка расходников"
 BTN_ASSEMBLY_REPORT = "Отчет сборка расходников"
+BTN_SHB_PLAN = "Задача по ШБ"
 BTN_HELP = "Помощь"
 BTN_CANCEL = "Отмена"
 BTN_MENU = "Меню"
@@ -23,6 +24,7 @@ ADMIN_BUTTONS = {
     BTN_EXIT_REPORT,
     BTN_ASSEMBLY,
     BTN_ASSEMBLY_REPORT,
+    BTN_SHB_PLAN,
 }
 MAIN_BUTTONS = {
     BTN_EMM,
@@ -61,6 +63,7 @@ def main_keyboard(*, show_do: bool = False, show_admin: bool = False) -> ReplyKe
             [
                 [KeyboardButton(text=BTN_EXIT_PLAN), KeyboardButton(text=BTN_EXIT_REPORT)],
                 [KeyboardButton(text=BTN_ASSEMBLY), KeyboardButton(text=BTN_ASSEMBLY_REPORT)],
+                [KeyboardButton(text=BTN_SHB_PLAN)],
             ]
         )
     keyboard.append([KeyboardButton(text=BTN_HELP)])
