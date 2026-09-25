@@ -17,6 +17,7 @@ from app.handlers.flows import answer_text
 from app.keyboards import (
     BTN_FO,
     BTN_FO_BUILD,
+    BTN_FO_BUILD_URGENT,
     BTN_MENU,
     CANCEL_BUTTONS,
     FLOW_BUTTONS,
@@ -37,6 +38,7 @@ from app.texts import (
     MSG_CANCELLED,
     MSG_FO_BAD_FILE,
     MSG_FO_BUILDING,
+    MSG_FO_BUILDING_URGENT,
     MSG_FO_DONE,
     MSG_FO_ERROR,
     MSG_FO_GROUP_HINT,
@@ -395,7 +397,7 @@ async def handle_fo_document_image(
     )
 
 
-@router.message(BotStates.fo_photos, F.text == BTN_FO_BUILD)
+@router.message(BotStates.fo_photos, F.text.in_({BTN_FO_BUILD, BTN_FO_BUILD_URGENT}))
 async def handle_fo_build(
     message: Message,
     bot: Bot,
@@ -414,6 +416,7 @@ async def handle_fo_build(
         )
         return
 
+    urgent = (message.text or "").strip() == BTN_FO_BUILD_URGENT
     project = str(data.get("fo_project") or "")
     store_name = str(data.get("fo_store_name") or "")
     store = ProjectStore(
@@ -434,7 +437,7 @@ async def handle_fo_build(
 
     await answer_text(
         message,
-        MSG_FO_BUILDING,
+        MSG_FO_BUILDING_URGENT if urgent else MSG_FO_BUILDING,
         reply_markup=fo_photos_keyboard(),
         parse_mode=ParseMode.HTML,
     )
@@ -460,6 +463,7 @@ async def handle_fo_build(
             store=store,
             photos=photos,
             download_photo=download_photo,
+            urgent=urgent,
         )
     except FinalReportError as exc:
         logger.exception("FO submit failed")

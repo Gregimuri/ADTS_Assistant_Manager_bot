@@ -6,6 +6,7 @@ BTN_INFO = "Инфо ТТ"
 BTN_REGIONS = "Передать регионы"
 BTN_FO = "Сдать ФО"
 BTN_FO_BUILD = "Сформировать отчет"
+BTN_FO_BUILD_URGENT = "Сформировать СРОЧНЫЙ отчет"
 BTN_DO = "Отчет ДО расходка"
 BTN_EXIT_PLAN = "План кол-во выходов"
 BTN_EXIT_REPORT = "Отчет кол-во выходов"
@@ -38,7 +39,13 @@ MAIN_BUTTONS = {
     *ADMIN_BUTTONS,
 }
 CANCEL_BUTTONS = {BTN_CANCEL, BTN_MENU, BTN_BACK}
-FLOW_BUTTONS = MAIN_BUTTONS | {BTN_DONE, BTN_DO_SEND, BTN_BACK, BTN_FO_BUILD}
+FLOW_BUTTONS = MAIN_BUTTONS | {
+    BTN_DONE,
+    BTN_DO_SEND,
+    BTN_BACK,
+    BTN_FO_BUILD,
+    BTN_FO_BUILD_URGENT,
+}
 
 
 def do_confirm_keyboard() -> ReplyKeyboardMarkup:
@@ -106,6 +113,7 @@ def fo_photos_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_FO_BUILD)],
+            [KeyboardButton(text=BTN_FO_BUILD_URGENT)],
             [KeyboardButton(text=BTN_CANCEL), KeyboardButton(text=BTN_MENU)],
         ],
         resize_keyboard=True,

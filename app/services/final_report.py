@@ -119,6 +119,7 @@ class FinalReportService:
         store: ProjectStore,
         photos: list[FinalReportPhoto],
         download_photo,
+        urgent: bool = False,
     ) -> FinalReportResult:
         if not photos:
             raise FinalReportError("Нужно хотя бы одно фото или видео.")
@@ -162,7 +163,9 @@ class FinalReportService:
         api_user_id = self._settings.bitrix_fo_fallback_creator_id  # webhook = Титков
         # Постановщик в карточке — менеджер ТТ (выставляется через update после создания).
         created_by_id = manager_id if manager_id > 0 else api_user_id
-        deadline = _deadline_for_fo()
+        deadline = _deadline_for_fo_urgent() if urgent else _deadline_for_fo()
+        # Bitrix: 2 = высокая важность (огонёк), 1 = обычная.
+        priority = 2 if urgent else 1
         description = (
             f"Постановщик (менеджер ТТ): {manager_name}\n"
             f"Ссылка на диск: {folder_url}"
@@ -174,7 +177,10 @@ class FinalReportService:
             | {responsible_id, api_user_id}
         )
         crm_items = await self._find_crm_task_bindings(project, store.name)
-        title = f'Финальный отчет - "{project} {store.name}"'
+        if urgent:
+            title = f'Финальный отчет СРОЧНО - "{project} {store.name}"'
+        else:
+            title = f'Финальный отчет - "{project} {store.name}"'
         try:
             task = await self._create_task(
                 title=title,
@@ -185,6 +191,7 @@ class FinalReportService:
                 group_id=group_id,
                 deadline=deadline,
                 crm_items=crm_items,
+                priority=priority,
             )
         except FinalReportError as exc:
             if not crm_items:
@@ -203,6 +210,7 @@ class FinalReportService:
                 group_id=group_id,
                 deadline=deadline,
                 crm_items=None,
+                priority=priority,
             )
         task_id = str(task.get("id") or task.get("ID") or "")
         if not task_id:
@@ -448,6 +456,7 @@ class FinalReportService:
         group_id: int,
         deadline: str,
         crm_items: list[str] | None = None,
+        priority: int = 1,
     ) -> dict[str, Any]:
         """Создаёт задачу ФО.
 
@@ -458,6 +467,7 @@ class FinalReportService:
         """
         api_user_id = self._settings.bitrix_fo_fallback_creator_id
         originator_id = created_by_id if created_by_id > 0 else api_user_id
+        task_priority = 2 if int(priority) >= 2 else 1
 
         seed = await self._call(
             "tasks.task.add",
@@ -469,7 +479,7 @@ class FinalReportService:
                     "RESPONSIBLE_ID": api_user_id,
                     "CREATED_BY": api_user_id,
                     "DEADLINE": deadline,
-                    "PRIORITY": 1,
+                    "PRIORITY": task_priority,
                 }
             },
             json_body=True,
@@ -490,6 +500,8 @@ class FinalReportService:
         finalize: dict[str, Any] = {
             "RESPONSIBLE_ID": responsible_id,
             "GROUP_ID": group_id,
+            "PRIORITY": task_priority,
+            "DEADLINE": deadline,
         }
         if auditors:
             finalize["AUDITORS"] = auditors
@@ -882,6 +894,12 @@ def _deadline_for_fo() -> str:
     elif day.weekday() == 6:  # воскресенье → понедельник
         day += timedelta(days=1)
     return f"{day.isoformat()}T18:00:00+03:00"
+
+
+def _deadline_for_fo_urgent() -> str:
+    """Срок срочного ФО — через 1 час от момента постановки (МСК)."""
+    due = datetime.now(_MSK) + timedelta(hours=1)
+    return due.strftime("%Y-%m-%dT%H:%M:%S+03:00")
 
 
 def _safe_filename(name: str) -> str:
