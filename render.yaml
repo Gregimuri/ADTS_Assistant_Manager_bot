@@ -39,7 +39,7 @@ services:
       - key: BITRIX_FO_FALLBACK_CREATOR_ID
         value: "401"
       - key: BITRIX_FO_AUDITOR_IDS
-        value: "281,203,201,401,641"
+        value: "281,203,201,401,641,211"
       - key: REPORT_DATA_PATH
         value: data/reports.json
       - key: SCHEDULED_EXIT_PROJECTS
