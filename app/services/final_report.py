@@ -12,7 +12,7 @@ from typing import Any
 import aiohttp
 
 from app.config import Settings
-from app.services.bitrix_rest import bitrix_call
+from app.services.bitrix_rest import bitrix_call, ssl_connector
 from app.services.catalog import Catalog
 from app.services.fo_managers import FoManagerRegistry
 from app.services.report_storage import ReportStorage
@@ -70,6 +70,7 @@ class FinalReportResult:
     creator_name: str
     store_name: str
     project: str
+    platform_url: str = ""
 
 
 class FinalReportService:
@@ -239,6 +240,162 @@ class FinalReportService:
         except ValueError as exc:
             raise FinalReportError(str(exc)) from exc
 
+    async def create_test_techmont_folder(self, store_name: str) -> tuple[str, str, str]:
+        """Папка «Итоговый фотоотчет Тестовая техмонт {ТТ}» на диске. Без задачи Bitrix."""
+        if not self._settings.bitrix_webhook_url.strip():
+            raise FinalReportError("BITRIX_WEBHOOK_URL не задан.")
+        project = "Тестовая техмонт"
+        parent_id = await self._resolve_test_parent_folder()
+        folder_id, folder_url, folder_name = await self.create_fo_upload_folder(
+            project=project,
+            store_name=store_name,
+            parent_id=parent_id,
+        )
+        logger.info("Test techmont FO folder %r id=%s", folder_name, folder_id)
+        return folder_id, folder_url, folder_name
+
+    async def create_techmont_mm_folder(self, store_name: str) -> tuple[str, str, str]:
+        """Папка как у «Сдать ФО» для ММ: тот же parent и поиск ТТ на диске."""
+        if not self._settings.bitrix_webhook_url.strip():
+            raise FinalReportError("BITRIX_WEBHOOK_URL не задан.")
+        project = "ММ"
+        folder_id = await self._resolve_upload_folder_id(project, store_name)
+        folder_name = _fo_upload_folder_name(project, store_name)
+        folder_url = await self._folder_share_url(folder_id)
+        logger.info("Techmont MM FO folder %r id=%s", folder_name, folder_id)
+        return folder_id, folder_url, folder_name
+
+    async def create_fo_upload_folder(
+        self,
+        *,
+        project: str,
+        store_name: str,
+        parent_id: str,
+    ) -> tuple[str, str, str]:
+        """ТТ-папка + «Итоговый фотоотчет …». Возвращает id, URL, имя папки ФО."""
+        tt_name = store_name.strip()
+        fo_name = _fo_upload_folder_name(project, tt_name)
+        tt_folder = await self._ensure_subfolder(
+            parent_id,
+            _tt_folder_create_name(project, tt_name),
+        )
+        tt_id = _disk_folder_id(tt_folder)
+        if not tt_id:
+            raise FinalReportError(f"Не удалось получить папку ТТ «{tt_name}» на диске.")
+        fo_folder = await self._ensure_subfolder(tt_id, fo_name)
+        fo_id = _disk_folder_id(fo_folder)
+        if not fo_id:
+            raise FinalReportError(f"Не удалось создать папку «{fo_name}» внутри ТТ.")
+        folder_url = await self._folder_share_url(fo_id, fo_folder)
+        return fo_id, folder_url, fo_name
+
+    async def _folder_share_url(self, folder_id: str, folder: dict[str, Any] | None = None) -> str:
+        """Публичная ссылка диска. focus.php без сессии открывает только логин."""
+        try:
+            link = await self._call(
+                "disk.folder.getexternallink",
+                {"id": folder_id},
+                timeout_seconds=25,
+            )
+            if isinstance(link, str) and link.strip():
+                return link.strip()
+        except FinalReportError:
+            logger.warning("disk.folder.getexternallink failed for %s", folder_id)
+        detail = ""
+        if isinstance(folder, dict):
+            detail = str(folder.get("DETAIL_URL") or folder.get("detailUrl") or "").strip()
+        if not detail:
+            try:
+                fresh = await self._call("disk.folder.get", {"id": folder_id}, timeout_seconds=25)
+            except FinalReportError:
+                fresh = None
+            if isinstance(fresh, dict):
+                detail = str(fresh.get("DETAIL_URL") or fresh.get("detailUrl") or "").strip()
+        if detail:
+            return detail
+        return _FOLDER_LINK.format(folder_id=folder_id)
+
+    async def upload_fo_files(
+        self,
+        folder_id: str,
+        files: list[tuple[str, bytes]],
+    ) -> list[str]:
+        """Кладёт файлы в уже созданную папку ФО. Возвращает id файлов на диске."""
+        file_ids: list[str] = []
+        for index, (filename, content) in enumerate(files, start=1):
+            if not content:
+                continue
+            file_id = await self._upload_file(
+                folder_id, filename or f"photo_{index}.jpg", content
+            )
+            if file_id:
+                file_ids.append(file_id)
+        return file_ids
+
+    async def attach_fo_result_to_bitrix_task(
+        self,
+        *,
+        bitrix_task_id: int,
+        file_ids: list[str],
+        result_text: str,
+        folder_url: str = "",
+    ) -> None:
+        """Комментарий с фото + закрепить как результат задачи Bitrix."""
+        if not self._settings.bitrix_webhook_url.strip():
+            raise FinalReportError("BITRIX_WEBHOOK_URL не задан.")
+        if bitrix_task_id <= 0:
+            raise FinalReportError("Некорректный ID задачи Bitrix.")
+        text = (result_text or "Фотоотчёт").strip() or "Фотоотчёт"
+        if folder_url.strip():
+            text = f"{text}\n{folder_url.strip()}"
+        fields: dict[str, Any] = {"POST_MESSAGE": text}
+        docs = [f"n{fid}" for fid in file_ids if str(fid).strip()]
+        if docs:
+            fields["UF_FORUM_MESSAGE_DOC"] = docs
+        comment = await self._call(
+            "task.commentitem.add",
+            {"TASKID": int(bitrix_task_id), "FIELDS": fields},
+            timeout_seconds=60,
+        )
+        comment_id = self._extract_bitrix_comment_id(comment)
+        if comment_id is None:
+            raise FinalReportError("Bitrix не вернул id комментария результата.")
+        try:
+            await self._call(
+                "tasks.task.result.addFromComment",
+                {"commentId": comment_id},
+                timeout_seconds=30,
+            )
+        except FinalReportError as exc:
+            logger.warning(
+                "tasks.task.result.addFromComment failed for bitrix task %s: %s",
+                bitrix_task_id,
+                exc,
+            )
+
+    async def _resolve_test_parent_folder(self) -> str:
+        """Родитель для тестовой техмонт: env id, folderId из URL или диск webhook."""
+        explicit = self._settings.adts_fo_test_parent_folder_id
+        parsed = _folder_id_from_url(self._settings.adts_fo_test_folder_url)
+        raw_id = str(explicit) if explicit and explicit > 0 else parsed
+        if not raw_id:
+            raise FinalReportError(
+                "Задайте ADTS_FO_TEST_PARENT_FOLDER_ID — числовой id папки на диске Bitrix."
+            )
+        parent_id = await self._real_folder_id(raw_id)
+        root = await self._ensure_subfolder(parent_id, "Тестовая техмонт")
+        nested = _disk_folder_id(root)
+        if not nested:
+            raise FinalReportError("Не удалось создать папку «Тестовая техмонт» на диске.")
+        return nested
+
+    async def _real_folder_id(self, folder_id: str) -> str:
+        result = await self._call("disk.folder.get", {"id": folder_id})
+        if not isinstance(result, dict):
+            raise FinalReportError(f"Не найдена папка на диске Bitrix (id={folder_id}).")
+        real = _disk_folder_id(result) or folder_id
+        return real
+
     async def _resolve_parent_folder(self, project: str) -> str:
         """Папка проекта на диске Bitrix, куда складываются ФО."""
         parent_id = FO_PROJECT_PARENT_FOLDERS.get(project)
@@ -345,9 +502,6 @@ class FinalReportService:
             start += 50
 
     async def _ensure_subfolder(self, parent_id: str, name: str) -> dict[str, Any]:
-        existing = await self._find_child_folder(parent_id, name)
-        if existing is not None:
-            return existing
         try:
             result = await self._call(
                 "disk.folder.addsubfolder",
@@ -355,9 +509,9 @@ class FinalReportService:
                     "id": parent_id,
                     "data": {"NAME": name},
                 },
+                timeout_seconds=25,
             )
         except FinalReportError:
-            # Возможно, папка уже есть (гонка / другая кодировка ответа)
             existing = await self._find_child_folder(parent_id, name)
             if existing is not None:
                 return existing
@@ -377,6 +531,7 @@ class FinalReportService:
                     "filter": {"NAME": name},
                     "start": start,
                 },
+                timeout_seconds=25,
             )
             items = result if isinstance(result, list) else []
             for item in items:
@@ -393,7 +548,44 @@ class FinalReportService:
             start += 50
         return None
 
-    async def _upload_file(self, folder_id: str, filename: str, content: bytes) -> None:
+    def _extract_bitrix_comment_id(self, comment: Any) -> int | None:
+        if isinstance(comment, bool):
+            return None
+        if isinstance(comment, int):
+            return comment if comment > 0 else None
+        if isinstance(comment, str) and comment.strip().isdigit():
+            value = int(comment.strip())
+            return value if value > 0 else None
+        if isinstance(comment, dict):
+            for key in ("ID", "id", "COMMENT_ID", "commentId"):
+                raw = comment.get(key)
+                if raw is None or str(raw).strip() == "":
+                    continue
+                try:
+                    value = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    return value
+        return None
+
+    def _extract_disk_file_id(self, file_obj: Any) -> str:
+        if isinstance(file_obj, (int, float)):
+            return str(int(file_obj))
+        if not isinstance(file_obj, dict):
+            return ""
+        raw = (
+            file_obj.get("ID")
+            or file_obj.get("id")
+            or file_obj.get("FILE_ID")
+            or file_obj.get("fileId")
+        )
+        if raw is None or str(raw).strip() == "":
+            return ""
+        return str(raw).strip()
+
+    async def _upload_file(self, folder_id: str, filename: str, content: bytes) -> str:
+        """Загружает файл на диск. Возвращает id файла Bitrix (пустая строка, если нет)."""
         safe_name = _safe_filename(filename)
         # Надёжный способ: получить UploadUrl и отправить multipart (без base64 в JSON).
         upload_info = await self._call(
@@ -411,7 +603,7 @@ class FinalReportService:
         if not upload_url:
             # fallback: старый способ через base64
             payload = base64.b64encode(content).decode("ascii")
-            await self._call(
+            result = await self._call(
                 "disk.folder.uploadfile",
                 {
                     "id": folder_id,
@@ -420,7 +612,7 @@ class FinalReportService:
                     "generateUniqueName": True,
                 },
             )
-            return
+            return self._extract_disk_file_id(result)
         timeout = aiohttp.ClientTimeout(total=600)
         form = aiohttp.FormData()
         form.add_field(
@@ -429,7 +621,7 @@ class FinalReportService:
             filename=safe_name,
             content_type="application/octet-stream",
         )
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(timeout=timeout, connector=ssl_connector()) as session:
             async with session.post(upload_url, data=form) as response:
                 body = await response.text()
                 if response.status >= 400:
@@ -444,6 +636,8 @@ class FinalReportService:
                     raise FinalReportError(
                         f"Bitrix API: {data.get('error_description') or data.get('error')}"
                     )
+                raw = data.get("result") if isinstance(data, dict) else None
+                return self._extract_disk_file_id(raw if raw is not None else data)
 
     async def _create_task(
         self,
@@ -771,17 +965,28 @@ class FinalReportService:
         params: dict[str, Any] | None = None,
         *,
         json_body: bool = False,
+        timeout_seconds: int = 120,
     ) -> Any:
         try:
             return await bitrix_call(
                 self._settings,
                 method,
                 params,
-                timeout_seconds=120,
+                timeout_seconds=timeout_seconds,
                 json_body=json_body,
             )
         except RuntimeError as exc:
             raise FinalReportError(str(exc)) from exc
+
+
+def _folder_id_from_url(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        return text
+    match = re.search(r"(?:folderId|FOLDER_ID)=(\d+)", text, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
 
 
 def _fo_upload_folder_name(project: str, store_name: str) -> str:
@@ -868,6 +1073,44 @@ def _tt_folder_create_name(project: str, tt_name: str) -> str:
     if len(parts) >= 2 and parts[0].casefold() == project.casefold():
         return " ".join(parts[1:])
     return tt_name.strip()
+
+
+def _disk_file_id(file_obj: Any) -> str:
+    if isinstance(file_obj, (int, float)):
+        return str(int(file_obj))
+    if not isinstance(file_obj, dict):
+        return ""
+    raw = (
+        file_obj.get("ID")
+        or file_obj.get("id")
+        or file_obj.get("FILE_ID")
+        or file_obj.get("fileId")
+    )
+    if raw is None or str(raw).strip() == "":
+        return ""
+    return str(raw).strip()
+
+
+def _bitrix_comment_id(comment: Any) -> int | None:
+    if isinstance(comment, bool):
+        return None
+    if isinstance(comment, int):
+        return comment if comment > 0 else None
+    if isinstance(comment, str) and comment.strip().isdigit():
+        value = int(comment.strip())
+        return value if value > 0 else None
+    if isinstance(comment, dict):
+        for key in ("ID", "id", "COMMENT_ID", "commentId"):
+            raw = comment.get(key)
+            if raw is None or str(raw).strip() == "":
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+    return None
 
 
 def _disk_folder_id(folder: dict[str, Any]) -> str:

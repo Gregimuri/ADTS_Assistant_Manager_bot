@@ -12,7 +12,7 @@ from urllib.parse import quote
 import aiohttp
 
 from app.config import Settings
-from app.services.bitrix_rest import parse_bitrix_task_id
+from app.services.bitrix_rest import parse_bitrix_task_id, ssl_connector
 from app.services.exit_plan_columns import resolve_exit_date_headers
 
 logger = logging.getLogger(__name__)
@@ -252,7 +252,7 @@ class SheetsClient:
             )
         last_error: Exception | None = None
         timeout = aiohttp.ClientTimeout(total=60)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(timeout=timeout, connector=ssl_connector()) as session:
             for url in urls:
                 try:
                     async with session.get(

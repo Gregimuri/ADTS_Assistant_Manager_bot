@@ -2,12 +2,24 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 from typing import Any
 from urllib.parse import urljoin
 
 import aiohttp
+import certifi
 
 from app.config import Settings
+
+
+def ssl_context() -> ssl.SSLContext:
+    """Корневые сертификаты certifi: системный Python на macOS без них рвёт TLS к Bitrix."""
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+def ssl_connector() -> aiohttp.TCPConnector:
+    """Коннектор aiohttp с certifi — для REST и uploadUrl диска."""
+    return aiohttp.TCPConnector(ssl=ssl_context())
 
 _TASK_VIEW_RE = re.compile(r"task/view/(\d+)", re.IGNORECASE)
 
@@ -54,24 +66,43 @@ async def bitrix_call(
     if not settings.bitrix_webhook_url.strip():
         raise RuntimeError("BITRIX_WEBHOOK_URL не задан.")
     url = urljoin(base, method)
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        if json_body:
-            request = session.post(url, json=params or {})
-        else:
-            request = session.post(url, data=flatten_params(params or {}))
-        async with request as response:
-            body = await response.text()
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds, sock_connect=10)
+    last_timeout: TimeoutError | None = None
+    for attempt in range(3):
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=ssl_connector(),
+        ) as session:
+            if json_body:
+                request = session.post(url, json=params or {})
+            else:
+                request = session.post(url, data=flatten_params(params or {}))
             try:
-                data = json.loads(body) if body else {}
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    f"Bitrix вернул не-JSON ответ (HTTP {response.status})."
-                ) from exc
-            if response.status >= 400 and not (
-                isinstance(data, dict) and data.get("error")
-            ):
-                raise RuntimeError(f"Bitrix HTTP {response.status}: {body[:300]}")
+                async with request as response:
+                    body = await response.text()
+                break
+            except TimeoutError as exc:
+                last_timeout = exc
+                if attempt == 2:
+                    raise RuntimeError(
+                        f"Bitrix не ответил за {timeout_seconds} с ({method}). "
+                        "С этой машины портал недоступен — папку на диске создать нельзя."
+                    ) from exc
+    else:
+        raise RuntimeError(
+            f"Bitrix не ответил за {timeout_seconds} с ({method}). "
+            "С этой машины портал недоступен — папку на диске создать нельзя."
+        ) from last_timeout
+    try:
+        data = json.loads(body) if body else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Bitrix вернул не-JSON ответ (HTTP {response.status})."
+        ) from exc
+    if response.status >= 400 and not (
+        isinstance(data, dict) and data.get("error")
+    ):
+        raise RuntimeError(f"Bitrix HTTP {response.status}: {body[:300]}")
     if not isinstance(data, dict):
         raise RuntimeError("Bitrix вернул неожиданный ответ.")
     if data.get("error"):

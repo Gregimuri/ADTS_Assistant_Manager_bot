@@ -5,6 +5,10 @@ BTN_TO = "Счёт ТО"
 BTN_INFO = "Инфо ТТ"
 BTN_REGIONS = "Передать регионы"
 BTN_FO = "Сдать ФО"
+BTN_TECHMONT = "Техмонт"
+BTN_PING = "Проверка связи"
+BTN_FO_TECHMONT_TEST = "Тестовая техмонт"
+BTN_FO_TECHMONT = "ММ ДП"
 BTN_FO_BUILD = "Сформировать отчет"
 BTN_FO_BUILD_URGENT = "Сформировать СРОЧНЫЙ отчет"
 BTN_DO = "Отчет ДО расходка"
@@ -31,13 +35,16 @@ MAIN_BUTTONS = {
     BTN_INFO,
     BTN_REGIONS,
     BTN_FO,
+    BTN_TECHMONT,
+    BTN_PING,
     BTN_DO,
     BTN_HELP,
     BTN_MENU,
     *ADMIN_BUTTONS,
 }
 CANCEL_BUTTONS = {BTN_CANCEL, BTN_MENU, BTN_BACK}
-FLOW_BUTTONS = MAIN_BUTTONS | {
+FO_MODE_BUTTONS = {BTN_FO_TECHMONT_TEST, BTN_FO_TECHMONT}
+FLOW_BUTTONS = MAIN_BUTTONS | FO_MODE_BUTTONS | {
     BTN_DONE,
     BTN_DO_SEND,
     BTN_BACK,
@@ -59,7 +66,8 @@ def main_keyboard(*, show_do: bool = False, show_admin: bool = False) -> ReplyKe
     keyboard: list[list[KeyboardButton]] = [
         [KeyboardButton(text=BTN_EMM), KeyboardButton(text=BTN_TO)],
         [KeyboardButton(text=BTN_INFO), KeyboardButton(text=BTN_REGIONS)],
-        [KeyboardButton(text=BTN_FO)],
+        [KeyboardButton(text=BTN_FO), KeyboardButton(text=BTN_TECHMONT)],
+        [KeyboardButton(text=BTN_PING)],
     ]
     if show_do:
         keyboard.append([KeyboardButton(text=BTN_DO)])
@@ -92,7 +100,32 @@ def projects_keyboard(options: list[str]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
+def fo_mode_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_FO_TECHMONT_TEST)],
+            [KeyboardButton(text=BTN_FO_TECHMONT)],
+            [KeyboardButton(text=BTN_CANCEL), KeyboardButton(text=BTN_MENU)],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def fo_projects_keyboard(options: list[str]) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    row: list[KeyboardButton] = []
+    for option in options:
+        row.append(KeyboardButton(text=option))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([KeyboardButton(text=BTN_CANCEL), KeyboardButton(text=BTN_MENU)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def fo_points_keyboard(options: list[str]) -> ReplyKeyboardMarkup:
     rows: list[list[KeyboardButton]] = []
     row: list[KeyboardButton] = []
     for option in options:

@@ -12,6 +12,7 @@ class BotStates(StatesGroup):
     exit_plan_projects = State()
     exit_report_projects = State()
     waiting_admin_report_confirm = State()
+    fo_mode = State()
     fo_project = State()
     fo_tt = State()
     fo_photos = State()

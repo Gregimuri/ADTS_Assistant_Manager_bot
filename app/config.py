@@ -63,6 +63,14 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("TELEGRAM_LOCAL_API_URL", "BOT_API_URL"),
     )
+    adts_hook_url: str = ""
+    adts_techmont_hook_url: str = ""
+    adts_creator_user_id: int | None = None
+    adts_assignee_user_id: int | None = None
+    adts_task_url_template: str = "http://127.0.0.1:5173/tasks/{number}"
+    adts_fo_link_column: str = "Ссылка на ФО"
+    adts_fo_test_folder_url: str = "https://adts.bitrix24.ru/folder/techmont-test"
+    adts_fo_test_parent_folder_id: int | None = None
 
     @property
     def public_base_url(self) -> str:
@@ -105,6 +113,13 @@ class Settings(BaseSettings):
             parsed = tuple(int(item) for item in value)
             return parsed or (201, 203, 641)
         raise ValueError(f"Invalid responsible id list: {value!r}")
+
+    @field_validator("adts_creator_user_id", "adts_assignee_user_id", mode="before")
+    @classmethod
+    def _parse_optional_user_id(cls, value: object) -> int | None:
+        if value is None or value == "":
+            return None
+        return int(value)  # type: ignore[arg-type]
 
     @field_validator("port", mode="before")
     @classmethod

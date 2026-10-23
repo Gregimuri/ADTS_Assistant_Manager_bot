@@ -18,13 +18,19 @@ from app.keyboards import (
     BTN_FO,
     BTN_FO_BUILD,
     BTN_FO_BUILD_URGENT,
+    BTN_FO_TECHMONT,
+    BTN_FO_TECHMONT_TEST,
     BTN_MENU,
+    BTN_TECHMONT,
     CANCEL_BUTTONS,
     FLOW_BUTTONS,
     cancel_keyboard,
+    fo_mode_keyboard,
     fo_photos_keyboard,
+    fo_points_keyboard,
     fo_projects_keyboard,
 )
+from app.services.adts_platform import AdtsPlatformClient, AdtsPlatformError, PlatformFoSubmit
 from app.services.final_report import (
     FO_PROJECTS,
     FinalReportError,
@@ -45,12 +51,29 @@ from app.texts import (
     MSG_FO_NEED_PHOTO,
     MSG_FO_PHOTO_ADDED,
     MSG_FO_PICK_PROJECT,
+    MSG_FO_PICK_MODE,
+    MSG_FO_PROMPT_MODE,
     MSG_FO_PROMPT_PHOTOS,
     MSG_FO_PROMPT_PROJECT,
     MSG_FO_PROMPT_TT,
     MSG_FO_SHEET_ERROR,
+    MSG_FO_TECHMONT_BUILDING,
+    MSG_FO_TECHMONT_TEST_BUILDING,
+    MSG_FO_TECHMONT_DONE,
+    MSG_FO_TECHMONT_NO_HOOK,
+    MSG_FO_TECHMONT_NO_POINTS,
+    MSG_FO_TECHMONT_PROMPT_TT,
     MSG_MAIN_MENU,
 )
+
+FO_KIND_TECHMONT_TEST = "techmont_test"
+FO_KIND_TECHMONT = "techmont"
+FO_KIND_BITRIX = "bitrix"
+_TECHMONT_KINDS = {FO_KIND_TECHMONT_TEST, FO_KIND_TECHMONT}
+_TECHMONT_TITLES = {
+    FO_KIND_TECHMONT_TEST: BTN_FO_TECHMONT_TEST,
+    FO_KIND_TECHMONT: BTN_FO_TECHMONT,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -138,15 +161,42 @@ async def _start_flow(
     state: FSMContext,
     service: FinalReportService,
 ) -> None:
+    """Старый ФО: сразу выбор проекта ММ/ДО/Лента/МА/ШБ."""
     projects = service.supported_projects()
     await state.set_state(BotStates.fo_project)
-    await state.update_data(fo_photos=[])
+    await state.update_data(fo_photos=[], fo_kind=FO_KIND_BITRIX)
     await answer_text(
         message,
         MSG_FO_PROMPT_PROJECT,
         reply_markup=fo_projects_keyboard(projects),
         parse_mode=ParseMode.HTML,
     )
+
+
+async def _start_techmont_menu(message: Message, state: FSMContext) -> None:
+    await state.set_state(BotStates.fo_mode)
+    await state.update_data(fo_photos=[], fo_kind="")
+    await answer_text(
+        message,
+        MSG_FO_PROMPT_MODE,
+        reply_markup=fo_mode_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+def _platform_client(settings: Settings, kind: str) -> AdtsPlatformClient:
+    if kind == FO_KIND_TECHMONT:
+        hook = (settings.adts_techmont_hook_url or settings.adts_hook_url).strip()
+        return AdtsPlatformClient(settings, hook_url=hook)
+    return AdtsPlatformClient(settings)
+
+
+def _points_suffix(names: list[str]) -> str:
+    if not names:
+        return ""
+    sample = ", ".join(html.escape(name) for name in names[:8])
+    extra = "" if len(names) <= 8 else f" и ещё {len(names) - 8}"
+    return f". Сейчас: {sample}{extra}"
 
 
 @router.message(FinalReportTagFilter())
@@ -173,6 +223,89 @@ async def start_fo_button(
         await answer_text(message, MSG_FO_GROUP_HINT, parse_mode=ParseMode.HTML)
         return
     await _start_flow(message, state, final_report)
+
+
+@router.message(F.text == BTN_TECHMONT, StateFilter(default_state))
+async def start_techmont_button(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    if is_group_chat(message):
+        await state.clear()
+        await answer_text(message, MSG_FO_GROUP_HINT, parse_mode=ParseMode.HTML)
+        return
+    await _start_techmont_menu(message, state)
+
+
+@router.message(BotStates.fo_mode, F.text)
+async def handle_fo_mode(
+    message: Message,
+    state: FSMContext,
+    final_report: FinalReportService,
+    settings: Settings,
+) -> None:
+    del final_report
+    text = (message.text or "").strip()
+    if text in CANCEL_BUTTONS or text == BTN_MENU:
+        await state.clear()
+        label = MSG_MAIN_MENU if text == BTN_MENU else MSG_CANCELLED
+        await answer_text(
+            message,
+            label,
+            reply_markup=keyboard_for_message(settings, message),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    kind = ""
+    if text == BTN_FO_TECHMONT_TEST:
+        kind = FO_KIND_TECHMONT_TEST
+    elif text == BTN_FO_TECHMONT:
+        kind = FO_KIND_TECHMONT
+    if kind:
+        title = _TECHMONT_TITLES[kind]
+        client = _platform_client(settings, kind)
+        if not client.enabled():
+            await answer_text(
+                message,
+                MSG_FO_TECHMONT_NO_HOOK.format(title=html.escape(title)),
+                reply_markup=fo_mode_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        try:
+            points = await client.list_points()
+        except AdtsPlatformError as exc:
+            await answer_text(
+                message,
+                MSG_FO_ERROR.format(error=html.escape(str(exc))),
+                reply_markup=fo_mode_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        if not points:
+            await answer_text(
+                message,
+                MSG_FO_TECHMONT_NO_POINTS,
+                reply_markup=fo_mode_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        names = [item.name for item in points]
+        await state.update_data(fo_kind=kind, fo_photos=[], fo_project=title)
+        await state.set_state(BotStates.fo_tt)
+        await answer_text(
+            message,
+            MSG_FO_TECHMONT_PROMPT_TT.format(title=html.escape(title), points=_points_suffix(names)),
+            reply_markup=fo_points_keyboard(names[:12]),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    await answer_text(
+        message,
+        MSG_FO_PICK_MODE,
+        reply_markup=fo_mode_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.message(BotStates.fo_project, F.text)
@@ -235,6 +368,36 @@ async def handle_fo_tt(
         return
     data = await state.get_data()
     project = str(data.get("fo_project") or "")
+    kind = str(data.get("fo_kind") or FO_KIND_BITRIX)
+    if kind in _TECHMONT_KINDS:
+        try:
+            point = await _platform_client(settings, kind).find_point(text)
+        except AdtsPlatformError as exc:
+            await answer_text(
+                message,
+                str(exc),
+                reply_markup=cancel_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        await state.update_data(
+            fo_store_name=point.name,
+            fo_store_manager=point.manager,
+            fo_store_region=point.region,
+            fo_store_address=point.address,
+            fo_photos=[],
+        )
+        await state.set_state(BotStates.fo_photos)
+        await answer_text(
+            message,
+            MSG_FO_PROMPT_PHOTOS.format(
+                project=_TECHMONT_TITLES.get(kind, "техмонт"),
+                store=point.name,
+            ),
+            reply_markup=fo_photos_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+        return
     try:
         store = await final_report.find_store(project, text)
     except ValueError as exc:
@@ -417,6 +580,7 @@ async def handle_fo_build(
         return
 
     urgent = (message.text or "").strip() == BTN_FO_BUILD_URGENT
+    kind = str(data.get("fo_kind") or FO_KIND_BITRIX)
     project = str(data.get("fo_project") or "")
     store_name = str(data.get("fo_store_name") or "")
     store = ProjectStore(
@@ -435,9 +599,17 @@ async def handle_fo_build(
         for index, item in enumerate(raw_photos, start=1)
     ]
 
+    if kind == FO_KIND_TECHMONT_TEST:
+        building = MSG_FO_TECHMONT_TEST_BUILDING
+    elif kind in _TECHMONT_KINDS:
+        building = MSG_FO_TECHMONT_BUILDING
+    elif urgent:
+        building = MSG_FO_BUILDING_URGENT
+    else:
+        building = MSG_FO_BUILDING
     await answer_text(
         message,
-        MSG_FO_BUILDING_URGENT if urgent else MSG_FO_BUILDING,
+        building,
         reply_markup=fo_photos_keyboard(),
         parse_mode=ParseMode.HTML,
     )
@@ -458,6 +630,77 @@ async def handle_fo_build(
         )
 
     try:
+        if kind in _TECHMONT_KINDS:
+            uploaded: list[tuple[str, bytes]] = []
+            for index, photo in enumerate(photos, start=1):
+                content = await download_photo(photo.file_id)
+                if content:
+                    uploaded.append((photo.filename or f"photo_{index}.jpg", content))
+            folder_url = ""
+            disk_file_ids: list[str] = []
+            if kind == FO_KIND_TECHMONT_TEST:
+                folder_id, folder_url, _folder_name = await final_report.create_test_techmont_folder(
+                    store_name
+                )
+                disk_file_ids = await final_report.upload_fo_files(folder_id, uploaded)
+            elif kind == FO_KIND_TECHMONT:
+                folder_id, folder_url, _folder_name = await final_report.create_techmont_mm_folder(
+                    store_name
+                )
+                disk_file_ids = await final_report.upload_fo_files(folder_id, uploaded)
+            result_text = "Срочный фотоотчёт" if urgent else "Фотоотчёт"
+            client = _platform_client(settings, kind)
+            # 1 диск → 2 ссылка в колонку → 3 результат платформы → 4 результат Bitrix
+            # Ссылка до result: иначе spawn «ФО Bitrix» уходит с пустым $Ссылка на ФО$.
+            column_id = await client.write_fo_link_for_point(
+                point_name=store_name,
+                folder_url=folder_url,
+            )
+            platform = await client.submit_result_for_point(
+                point_name=store_name,
+                files=uploaded,
+                result_text=result_text,
+                folder_url=folder_url,
+                write_link=False,
+            )
+            if platform.bitrix_task_id and disk_file_ids:
+                try:
+                    await final_report.attach_fo_result_to_bitrix_task(
+                        bitrix_task_id=platform.bitrix_task_id,
+                        file_ids=disk_file_ids,
+                        result_text=result_text,
+                        folder_url=folder_url,
+                    )
+                except FinalReportError as exc:
+                    logger.warning(
+                        "Bitrix result attach failed for task %s: %s",
+                        platform.bitrix_task_id,
+                        exc,
+                    )
+            platform = PlatformFoSubmit(
+                point_name=platform.point_name,
+                column_id=column_id,
+                folder_url=platform.folder_url or folder_url,
+                photos=platform.photos,
+                platform_url=platform.platform_url,
+                bitrix_task_id=platform.bitrix_task_id,
+            )
+            await state.clear()
+            await answer_text(
+                message,
+                MSG_FO_TECHMONT_DONE.format(
+                    title=html.escape(_TECHMONT_TITLES.get(kind, "Техмонт")),
+                    store=html.escape(platform.point_name),
+                    photos=platform.photos,
+                    column=html.escape(platform.column_id),
+                    folder_url=html.escape(platform.folder_url),
+                    platform_url=html.escape(platform.platform_url),
+                ),
+                reply_markup=keyboard_for_message(settings, message),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         result = await final_report.submit(
             project=project,
             store=store,
@@ -465,7 +708,7 @@ async def handle_fo_build(
             download_photo=download_photo,
             urgent=urgent,
         )
-    except FinalReportError as exc:
+    except (FinalReportError, AdtsPlatformError) as exc:
         logger.exception("FO submit failed")
         await answer_text(
             message,
