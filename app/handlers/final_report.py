@@ -191,11 +191,12 @@ def _platform_client(settings: Settings, kind: str) -> AdtsPlatformClient:
     return AdtsPlatformClient(settings)
 
 
-def _points_suffix(names: list[str]) -> str:
+def _points_suffix(names: list[str], total: int | None = None) -> str:
     if not names:
         return ""
     sample = ", ".join(html.escape(name) for name in names[:8])
-    extra = "" if len(names) <= 8 else f" и ещё {len(names) - 8}"
+    count = total if total is not None else len(names)
+    extra = "" if count <= 8 else f" и ещё {count - 8}"
     return f". Сейчас: {sample}{extra}"
 
 
@@ -273,7 +274,7 @@ async def handle_fo_mode(
             )
             return
         try:
-            points = await client.list_points()
+            total, points = await client.sample_points()
         except AdtsPlatformError as exc:
             await answer_text(
                 message,
@@ -295,7 +296,10 @@ async def handle_fo_mode(
         await state.set_state(BotStates.fo_tt)
         await answer_text(
             message,
-            MSG_FO_TECHMONT_PROMPT_TT.format(title=html.escape(title), points=_points_suffix(names)),
+            MSG_FO_TECHMONT_PROMPT_TT.format(
+                title=html.escape(title),
+                points=_points_suffix(names, total),
+            ),
             reply_markup=fo_points_keyboard(names[:12]),
             parse_mode=ParseMode.HTML,
         )

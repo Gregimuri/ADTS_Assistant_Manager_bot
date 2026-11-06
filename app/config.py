@@ -114,7 +114,12 @@ class Settings(BaseSettings):
             return parsed or (201, 203, 641)
         raise ValueError(f"Invalid responsible id list: {value!r}")
 
-    @field_validator("adts_creator_user_id", "adts_assignee_user_id", mode="before")
+    @field_validator(
+        "adts_creator_user_id",
+        "adts_assignee_user_id",
+        "adts_fo_test_parent_folder_id",
+        mode="before",
+    )
     @classmethod
     def _parse_optional_user_id(cls, value: object) -> int | None:
         if value is None or value == "":
