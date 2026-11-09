@@ -47,10 +47,44 @@ class PlatformFoSubmit:
 
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _PAGE = 100
+_PROMPT_POINTS = 20
+_POINT_COLUMNS = "point_name,region,address,status,manager"
 
 
 def _point_name_key(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _parse_points(page: dict[str, Any]) -> list[PlatformPoint]:
+    """Строки ответа workbook.rows.get → точки платформы."""
+    raw_items = page.get("items") or []
+    if not isinstance(raw_items, list):
+        return []
+    points: list[PlatformPoint] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("point_name") or "").strip()
+        row_id = str(item.get("row_id") or "").strip()
+        if not name or not row_id:
+            continue
+        points.append(
+            PlatformPoint(
+                row_id=row_id,
+                name=name,
+                region=str(item.get("region") or ""),
+                address=str(item.get("address") or ""),
+                manager=str(item.get("manager") or ""),
+            )
+        )
+    return points
+
+
+def _page_total(page: dict[str, Any]) -> int:
+    try:
+        return max(0, int(page.get("total") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 class AdtsPlatformError(RuntimeError):
@@ -84,65 +118,58 @@ class AdtsPlatformClient:
             if col_id == fo_raw or col_id.casefold() == wanted or title.casefold() == wanted:
                 fo_column = title or col_id
                 break
-        points = await self.list_points()
+        total, _ = await self.sample_points(limit=1)
         return {
             "project_id": schema.get("project_id") or "—",
             "columns": len(columns),
-            "points": len(points),
+            "points": total,
             "fo_column": fo_column,
         }
 
-    async def list_points(self) -> list[PlatformPoint]:
-        """Точки primary-листа хука. Без Bitrix."""
-        if not self.enabled():
-            raise AdtsPlatformError("Хук платформы не задан.")
-        points: list[PlatformPoint] = []
-        offset = 0
-        total: int | None = None
-        while total is None or offset < total:
-            page = await self._call("workbook.rows.get", {"limit": _PAGE, "offset": offset})
-            if not isinstance(page, dict):
-                break
-            if total is None:
-                try:
-                    total = int(page.get("total") or 0)
-                except (TypeError, ValueError):
-                    total = 0
-            items = page.get("items") or []
-            if not isinstance(items, list):
-                break
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                name = str(item.get("point_name") or "").strip()
-                row_id = str(item.get("row_id") or "").strip()
-                if not name or not row_id:
-                    continue
-                points.append(
-                    PlatformPoint(
-                        row_id=row_id,
-                        name=name,
-                        region=str(item.get("region") or ""),
-                        address=str(item.get("address") or ""),
-                        manager=str(item.get("manager") or ""),
-                    )
-                )
-            if not items:
-                break
-            offset += len(items)
-        return points
+    async def _rows_page(
+        self,
+        *,
+        q: str | None = None,
+        limit: int = _PAGE,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Одна страница workbook.rows.get с фильтром и только нужными колонками."""
+        body: dict[str, Any] = {
+            "limit": max(1, min(limit, _PAGE)),
+            "offset": max(0, offset),
+            "columns": _POINT_COLUMNS,
+        }
+        query = (q or "").strip()
+        if query:
+            body["q"] = query
+        page = await self._call("workbook.rows.get", body)
+        return page if isinstance(page, dict) else {}
+
+    async def sample_points(
+        self,
+        limit: int = _PROMPT_POINTS,
+    ) -> tuple[int, list[PlatformPoint]]:
+        """Несколько точек для подсказки + общее число строк."""
+        page = await self._rows_page(limit=limit)
+        return _page_total(page), _parse_points(page)
 
     async def find_point(self, query: str) -> PlatformPoint:
         """Одна точка по названию. Несколько совпадений — ошибка."""
         wanted = _point_name_key(query)
         if not wanted:
             raise AdtsPlatformError("Введите название ТТ.")
-        points = await self.list_points()
-        matched = [item for item in points if _point_name_key(item.name) == wanted]
+        page = await self._rows_page(q=query, limit=_PAGE)
+        candidates = _parse_points(page)
+        total = _page_total(page)
+        matched = [item for item in candidates if _point_name_key(item.name) == wanted]
         if not matched:
-            matched = [item for item in points if wanted in _point_name_key(item.name)]
+            matched = [item for item in candidates if wanted in _point_name_key(item.name)]
         names = {item.name for item in matched}
         if not names:
+            if total > len(candidates):
+                raise AdtsPlatformError(
+                    "Слишком много совпадений. Уточните название ТТ."
+                )
             raise AdtsPlatformError(f"Точка «{query.strip()}» не найдена в таблице платформы.")
         if len(names) > 1:
             sample = ", ".join(sorted(names)[:5])
@@ -320,37 +347,8 @@ class AdtsPlatformClient:
         return f"№{number}"
 
     async def _find_row_id(self, point_name: str) -> str:
-        wanted = _point_name_key(point_name)
-        offset = 0
-        total = None
-        while total is None or offset < total:
-            page = await self._call(
-                "workbook.rows.get",
-                {"limit": _PAGE, "offset": offset},
-            )
-            if not isinstance(page, dict):
-                break
-            if total is None:
-                try:
-                    total = int(page.get("total") or 0)
-                except (TypeError, ValueError):
-                    total = 0
-            items = page.get("items") or []
-            if not isinstance(items, list):
-                break
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                name = str(item.get("point_name") or "")
-                if _point_name_key(name) != wanted:
-                    continue
-                row_id = str(item.get("row_id") or "").strip()
-                if row_id:
-                    return row_id
-            if not items:
-                break
-            offset += len(items)
-        raise AdtsPlatformError(f"Точка «{point_name}» не найдена в таблице платформы.")
+        point = await self.find_point(point_name)
+        return point.row_id
 
     async def _call(self, method: str, body: dict[str, Any]) -> Any:
         url = f"{self._hook_url.rstrip('/')}/{method}"
