@@ -76,7 +76,7 @@ class ReportStorage:
         return snapshot
 
     async def next_fo_responsible_id(self, candidates: tuple[int, ...] | list[int]) -> int:
-        """Круговая очередь исполнителей ФО: Андреевских → Корчагин → Белов → …"""
+        """Круговая очередь исполнителей ФО: Андреевских → Корчагин → Абакумов → …"""
         pool = [int(user_id) for user_id in candidates if int(user_id) > 0]
         if not pool:
             raise ValueError("Список исполнителей ФО пуст.")

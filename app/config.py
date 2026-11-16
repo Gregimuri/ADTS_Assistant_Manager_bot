@@ -4,7 +4,7 @@ from typing import Annotated
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-# CSV в .env (201,203,641) — не JSON; без NoDecode pydantic-settings падает на старте.
+# CSV в .env (201,203,643) — не JSON; без NoDecode pydantic-settings падает на старте.
 _CsvIntSet = Annotated[frozenset[int], NoDecode]
 _CsvIntTuple = Annotated[tuple[int, ...], NoDecode]
 
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     bitrix_assembly_responsible_id: int = 197
     bitrix_assembly_creator_id: int = 439
     bitrix_fo_responsible_ids: _CsvIntTuple = Field(
-        default=(201, 203, 641),
+        default=(201, 203, 643),
         validation_alias=AliasChoices(
             "BITRIX_FO_RESPONSIBLE_IDS",
             "bitrix_fo_responsible_ids",
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         ),
     )
     bitrix_fo_fallback_creator_id: int = 401
-    bitrix_fo_auditor_ids: _CsvIntSet = frozenset({281, 203, 201, 401, 641, 211})
+    bitrix_fo_auditor_ids: _CsvIntSet = frozenset({281, 203, 201, 401, 641, 211, 643})
     # SPA «Объекты» в портале: crm.item entityTypeId=1032, в UF_CRM_TASK — префикс T408_
     bitrix_fo_crm_entity_type_id: int = 1032
     bitrix_fo_crm_binding_prefix: str = "T408"
@@ -101,17 +101,17 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_responsible_ids(cls, value: object) -> tuple[int, ...]:
         if value is None or value == "":
-            return (201, 203, 641)
+            return (201, 203, 643)
         if isinstance(value, tuple) and value and all(isinstance(i, int) for i in value):
             return value
         if isinstance(value, int):
             return (value,)
         if isinstance(value, str):
             parts = [part.strip() for part in value.split(",") if part.strip()]
-            return tuple(int(part) for part in parts) or (201, 203, 641)
+            return tuple(int(part) for part in parts) or (201, 203, 643)
         if isinstance(value, (list, tuple)):
             parsed = tuple(int(item) for item in value)
-            return parsed or (201, 203, 641)
+            return parsed or (201, 203, 643)
         raise ValueError(f"Invalid responsible id list: {value!r}")
 
     @field_validator(

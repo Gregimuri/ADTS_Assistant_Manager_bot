@@ -123,9 +123,9 @@ python -m app.main
 | `DO_REPORT_USER_IDS` | Кому доступны `#ДО` и кнопка «Отчет ДО расходка» |
 | `ADMIN_REPORT_CHAT_ID` | Группа для админ-отчётов (по умолчанию `-5278414891`) |
 | `BITRIX_WEBHOOK_URL` | Webhook Bitrix24 (нужны права `task`, `user`, `disk`) |
-| `BITRIX_FO_RESPONSIBLE_IDS` | Исполнители ФО по кругу: Андреевских → Корчагин → Белов (`201,203,641`) |
+| `BITRIX_FO_RESPONSIBLE_IDS` | Исполнители ФО по кругу: Андреевских → Корчагин → Абакумов (`201,203,643`) |
 | `BITRIX_FO_FALLBACK_CREATOR_ID` | Webhook/Титков; запасной постановщик, если Bitrix не даёт выставить менеджера ТТ |
-| `BITRIX_FO_AUDITOR_IDS` | Наблюдатели задачи ФО (Поляков, Корчагин, Андреевских, Титков, Белов, Галинский) |
+| `BITRIX_FO_AUDITOR_IDS` | Наблюдатели задачи ФО (Поляков, Корчагин, Андреевских, Титков, Белов, Галинский, Абакумов) |
 | `BITRIX_FO_CRM_ENTITY_TYPE_ID` | SPA «Объекты» для привязки CRM (`1032`) |
 | `BITRIX_FO_CRM_BINDING_PREFIX` | Префикс в `UF_CRM_TASK` на портале (`T408`) |
 | `REPORT_DATA_PATH` | JSON-файл с утренними планами выходов (`data/reports.json`, том `bot-data` в Docker) |
