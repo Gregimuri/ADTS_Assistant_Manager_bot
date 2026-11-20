@@ -229,14 +229,11 @@ def _format_to_store_block(match: ToMatch, settings: Settings) -> str:
         task_line = f"{_italic('Ссылка на задачу -')} -"
 
     work_label = visit.work_type.strip() if visit.work_type.strip() else "-"
-    tt_total = to_store_price(match)
     return (
         f"{header}\n"
         f"{task_line}\n"
         "Фото акта приложено.\n"
-        f"          — Выезд на ТО ({_italic(work_label)}) - {visit.actual_cost} р\n"
-        f"          — Доп затраты - {visit.extra_cost} р\n"
-        f"          {_bold(f'Итого сумма затрат по ТТ составляет: {tt_total} руб.')}"
+        f"          — Выезд на ТО ({_italic(work_label)}) - {visit.actual_cost} р"
     )
 
 
