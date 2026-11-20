@@ -11,7 +11,7 @@ services:
       - .env
     restart: unless-stopped
     volumes:
-      # Утренние планы выходов и снимки сборки переживают rebuild
+      # Очередь исполнителей ФО переживает rebuild
       - bot-data:/app/data
 
 volumes:
