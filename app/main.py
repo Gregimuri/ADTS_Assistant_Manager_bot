@@ -36,6 +36,9 @@ from app.services.sheets import SheetsClient
 
 logger = logging.getLogger(__name__)
 
+# Меняется при каждом важном деплое — по этой строке в логах видно, что поднята нужная сборка.
+BUILD_MARKER = "2026-11-20-no-admin-reports"
+
 WEBHOOK_PATH = "/webhook"
 ALLOWED_UPDATES = ["message", "edited_message", "callback_query"]
 
@@ -157,6 +160,7 @@ async def _run_web(bot: Bot, dp: Dispatcher, settings: Settings) -> None:
 
 async def run() -> None:
     _configure_logging()
+    logger.info("Build marker: %s (schedulers: do_report only)", BUILD_MARKER)
     settings = get_settings()
     sheets = SheetsClient(settings)
     catalog = Catalog(sheets, settings)
