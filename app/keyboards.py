@@ -12,10 +12,6 @@ BTN_FO_TECHMONT = "ММ ДП"
 BTN_FO_BUILD = "Сформировать отчет"
 BTN_FO_BUILD_URGENT = "Сформировать СРОЧНЫЙ отчет"
 BTN_DO = "Отчет ДО расходка"
-BTN_EXIT_PLAN = "План кол-во выходов"
-BTN_EXIT_REPORT = "Отчет кол-во выходов"
-BTN_ASSEMBLY = "Сборка расходников"
-BTN_ASSEMBLY_REPORT = "Отчет сборка расходников"
 BTN_HELP = "Помощь"
 BTN_CANCEL = "Отмена"
 BTN_MENU = "Меню"
@@ -23,12 +19,6 @@ BTN_DO_SEND = "Отправить в группу"
 BTN_BACK = "Назад"
 BTN_DONE = "Готово"
 
-ADMIN_BUTTONS = {
-    BTN_EXIT_PLAN,
-    BTN_EXIT_REPORT,
-    BTN_ASSEMBLY,
-    BTN_ASSEMBLY_REPORT,
-}
 MAIN_BUTTONS = {
     BTN_EMM,
     BTN_TO,
@@ -40,7 +30,6 @@ MAIN_BUTTONS = {
     BTN_DO,
     BTN_HELP,
     BTN_MENU,
-    *ADMIN_BUTTONS,
 }
 CANCEL_BUTTONS = {BTN_CANCEL, BTN_MENU, BTN_BACK}
 FO_MODE_BUTTONS = {BTN_FO_TECHMONT_TEST, BTN_FO_TECHMONT}
@@ -62,7 +51,7 @@ def do_confirm_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def main_keyboard(*, show_do: bool = False, show_admin: bool = False) -> ReplyKeyboardMarkup:
+def main_keyboard(*, show_do: bool = False) -> ReplyKeyboardMarkup:
     keyboard: list[list[KeyboardButton]] = [
         [KeyboardButton(text=BTN_EMM), KeyboardButton(text=BTN_TO)],
         [KeyboardButton(text=BTN_INFO), KeyboardButton(text=BTN_REGIONS)],
@@ -71,13 +60,6 @@ def main_keyboard(*, show_do: bool = False, show_admin: bool = False) -> ReplyKe
     ]
     if show_do:
         keyboard.append([KeyboardButton(text=BTN_DO)])
-    if show_admin:
-        keyboard.extend(
-            [
-                [KeyboardButton(text=BTN_EXIT_PLAN), KeyboardButton(text=BTN_EXIT_REPORT)],
-                [KeyboardButton(text=BTN_ASSEMBLY), KeyboardButton(text=BTN_ASSEMBLY_REPORT)],
-            ]
-        )
     keyboard.append([KeyboardButton(text=BTN_HELP)])
     return ReplyKeyboardMarkup(
         keyboard=keyboard,

@@ -17,7 +17,6 @@ from pathlib import Path
 from app.config import Settings, get_settings
 from app.telegram_bot import create_bot
 from app.handlers import (
-    admin_reports_router,
     do_report_router,
     emm_invoice_router,
     final_report_router,
@@ -27,11 +26,8 @@ from app.handlers import (
     start_router,
     to_invoice_router,
 )
-from app.services.admin_report_scheduler import run_admin_report_scheduler
-from app.services.assembly_reports import AssemblyReportsService
 from app.services.catalog import Catalog
 from app.services.do_report import run_do_report_scheduler
-from app.services.exit_reports import ExitReportsService
 from app.services.final_report import FO_PROJECTS, FinalReportService
 from app.services.fo_managers import FoManagerRegistry
 from app.services.region_transfer import RegionTransferService
@@ -86,8 +82,6 @@ def _webhook_secret(bot_token: str) -> str:
 def _build_dispatcher(
     catalog: Catalog,
     region_transfer: RegionTransferService,
-    exit_reports: ExitReportsService,
-    assembly_reports: AssemblyReportsService,
     final_report: FinalReportService,
     settings: Settings,
 ) -> Dispatcher:
@@ -95,7 +89,6 @@ def _build_dispatcher(
     dp = Dispatcher(storage=MemoryStorage(), events_isolation=SimpleEventIsolation())
     dp.include_routers(
         start_router,
-        admin_reports_router,
         do_report_router,
         region_transfer_router,
         final_report_router,
@@ -108,8 +101,6 @@ def _build_dispatcher(
         catalog=catalog,
         settings=settings,
         region_transfer=region_transfer,
-        exit_reports=exit_reports,
-        assembly_reports=assembly_reports,
         final_report=final_report,
     )
     return dp
@@ -171,8 +162,6 @@ async def run() -> None:
     catalog = Catalog(sheets, settings)
     region_transfer = RegionTransferService(sheets)
     report_storage = ReportStorage(Path(settings.report_data_path))
-    exit_reports = ExitReportsService(sheets, report_storage)
-    assembly_reports = AssemblyReportsService(settings, report_storage)
     fo_managers = FoManagerRegistry(settings)
     final_report = FinalReportService(settings, catalog, fo_managers, report_storage)
     fo_managers_task = asyncio.create_task(fo_managers.warm_up(catalog, FO_PROJECTS))
@@ -182,15 +171,10 @@ async def run() -> None:
     dp = _build_dispatcher(
         catalog,
         region_transfer,
-        exit_reports,
-        assembly_reports,
         final_report,
         settings,
     )
     scheduler_task = asyncio.create_task(run_do_report_scheduler(bot, catalog, settings))
-    admin_scheduler_task = asyncio.create_task(
-        run_admin_report_scheduler(bot, exit_reports, assembly_reports, settings)
-    )
 
     try:
         if settings.port:
@@ -202,12 +186,9 @@ async def run() -> None:
         await _start_polling(bot, dp)
     finally:
         fo_managers_task.cancel()
-        admin_scheduler_task.cancel()
         scheduler_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await fo_managers_task
-        with contextlib.suppress(asyncio.CancelledError):
-            await admin_scheduler_task
         with contextlib.suppress(asyncio.CancelledError):
             await scheduler_task
         await bot.session.close()

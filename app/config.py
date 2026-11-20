@@ -24,12 +24,8 @@ class Settings(BaseSettings):
     directory_sheet_name: str = "Справочник"
     do_sheet_name: str = "ДО"
     do_report_chat_id: int = -4893962129
-    admin_report_chat_id: int = -5278414891
-    admin_user_ids: _CsvIntSet = frozenset({1029160022})
     do_report_user_ids: _CsvIntSet = frozenset({1029160022})
     bitrix_webhook_url: str = "https://adts.bitrix24.ru/rest/401/t83wze013cj1wvky/"
-    bitrix_assembly_responsible_id: int = 197
-    bitrix_assembly_creator_id: int = 439
     bitrix_fo_responsible_ids: _CsvIntTuple = Field(
         default=(201, 203, 643),
         validation_alias=AliasChoices(
@@ -45,7 +41,6 @@ class Settings(BaseSettings):
     bitrix_fo_crm_entity_type_id: int = 1032
     bitrix_fo_crm_binding_prefix: str = "T408"
     report_data_path: str = "data/reports.json"
-    scheduled_exit_projects: str = "ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО"
     do_order_horizon_days: int = 17
     do_moscow_order_horizon_days: int = 17
     sheets_cache_ttl_seconds: int = 600
@@ -77,7 +72,6 @@ class Settings(BaseSettings):
         return self.webhook_base_url.rstrip("/")
 
     @field_validator(
-        "admin_user_ids",
         "do_report_user_ids",
         "bitrix_fo_auditor_ids",
         mode="before",

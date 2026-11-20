@@ -22,18 +22,10 @@ services:
         value: "500"
       - key: DO_REPORT_CHAT_ID
         value: "-4893962129"
-      - key: ADMIN_USER_IDS
-        value: "1029160022"
       - key: DO_REPORT_USER_IDS
         value: "1029160022"
-      - key: ADMIN_REPORT_CHAT_ID
-        value: "-5278414891"
       - key: BITRIX_WEBHOOK_URL
         sync: false
-      - key: BITRIX_ASSEMBLY_RESPONSIBLE_ID
-        value: "197"
-      - key: BITRIX_ASSEMBLY_CREATOR_ID
-        value: "439"
       - key: BITRIX_FO_RESPONSIBLE_IDS
         value: "201,203,643"
       - key: BITRIX_FO_FALLBACK_CREATOR_ID
@@ -42,8 +34,6 @@ services:
         value: "281,203,201,401,641,211,643"
       - key: REPORT_DATA_PATH
         value: data/reports.json
-      - key: SCHEDULED_EXIT_PROJECTS
-        value: ДО,ШБ,ММ,МА,Лента,Фасоль,Метро,ФЭ,ТО
       - key: DO_ORDER_HORIZON_DAYS
         value: "17"
       - key: DO_MOSCOW_ORDER_HORIZON_DAYS

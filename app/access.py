@@ -10,12 +10,6 @@ def _user_id(user: User | None) -> int | None:
     return user.id if user else None
 
 
-def is_admin(settings: Settings, user_id: int | None) -> bool:
-    if user_id is None:
-        return False
-    return user_id in settings.admin_user_ids
-
-
 def can_use_do_report(settings: Settings, user_id: int | None) -> bool:
     if user_id is None:
         return False
@@ -24,8 +18,7 @@ def can_use_do_report(settings: Settings, user_id: int | None) -> bool:
 
 def user_main_keyboard(settings: Settings, user_id: int | None):
     show_do = can_use_do_report(settings, user_id)
-    show_admin = is_admin(settings, user_id)
-    return main_keyboard(show_do=show_do, show_admin=show_admin)
+    return main_keyboard(show_do=show_do)
 
 
 def keyboard_for_message(settings: Settings, message: Message):
