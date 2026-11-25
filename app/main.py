@@ -37,7 +37,7 @@ from app.services.sheets import SheetsClient
 logger = logging.getLogger(__name__)
 
 # Меняется при каждом важном деплое — по этой строке в логах видно, что поднята нужная сборка.
-BUILD_MARKER = "2026-11-20-no-admin-reports"
+BUILD_MARKER = "2026-11-25-fo-media-lock"
 
 WEBHOOK_PATH = "/webhook"
 ALLOWED_UPDATES = ["message", "edited_message", "callback_query"]

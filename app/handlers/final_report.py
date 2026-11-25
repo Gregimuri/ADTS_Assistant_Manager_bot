@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import html
 import logging
+from dataclasses import dataclass
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction, MessageEntityType, ParseMode
@@ -50,6 +53,7 @@ from app.texts import (
     MSG_FO_GROUP_HINT,
     MSG_FO_NEED_PHOTO,
     MSG_FO_PHOTO_ADDED,
+    MSG_FO_PHOTOS_ADDED,
     MSG_FO_PICK_PROJECT,
     MSG_FO_PICK_MODE,
     MSG_FO_PROMPT_MODE,
@@ -107,28 +111,136 @@ def _video_filename(
     return f"video_{index}{ext}"
 
 
-async def _append_fo_media(
+@dataclass(frozen=True, slots=True)
+class _FoMediaItem:
+    file_id: str
+    file_unique_id: str
+    filename: str
+    file_size: int | None = None
+
+
+# Пачка фото из Telegram Desktop приходит параллельно — без lock часть затирается в FSM.
+_FO_MEDIA_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+_FO_ALBUM_ADDED: dict[tuple[int, int, str], int] = {}
+_FO_ALBUM_TASKS: dict[tuple[int, int, str], asyncio.Task[None]] = {}
+_FO_ALBUM_WAIT_SECONDS = 1.0
+
+
+def _fo_media_lock(chat_id: int, user_id: int) -> asyncio.Lock:
+    key = (chat_id, user_id)
+    lock = _FO_MEDIA_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _FO_MEDIA_LOCKS[key] = lock
+    return lock
+
+
+def _message_user_id(message: Message) -> int:
+    return message.from_user.id if message.from_user else 0
+
+
+async def _append_fo_media_items(
     state: FSMContext,
     *,
-    file_id: str,
-    file_unique_id: str,
-    filename: str,
-    file_size: int | None = None,
-) -> int:
+    chat_id: int,
+    user_id: int,
+    items: list[_FoMediaItem],
+) -> tuple[int, int]:
+    """Добавляет файлы под lock. Возвращает (сколько новых, всего в списке)."""
+    if not items:
+        data = await state.get_data()
+        return 0, len(list(data.get("fo_photos") or []))
+
+    async with _fo_media_lock(chat_id, user_id):
+        data = await state.get_data()
+        photos = list(data.get("fo_photos") or [])
+        unique_ids = {item.get("file_unique_id") for item in photos}
+        added = 0
+        for media in items:
+            if media.file_unique_id in unique_ids:
+                continue
+            index = len(photos) + 1
+            filename = media.filename
+            if "{index}" in filename:
+                filename = filename.format(index=index)
+            entry: dict[str, object] = {
+                "file_id": media.file_id,
+                "file_unique_id": media.file_unique_id,
+                "filename": filename,
+            }
+            if media.file_size is not None:
+                entry["file_size"] = media.file_size
+            photos.append(entry)
+            unique_ids.add(media.file_unique_id)
+            added += 1
+        if added:
+            await state.update_data(fo_photos=photos)
+        return added, len(photos)
+
+
+async def _reply_fo_album(
+    *,
+    key: tuple[int, int, str],
+    message: Message,
+    state: FSMContext,
+) -> None:
+    await asyncio.sleep(_FO_ALBUM_WAIT_SECONDS)
+    added = _FO_ALBUM_ADDED.pop(key, 0)
+    _FO_ALBUM_TASKS.pop(key, None)
+    if added <= 0:
+        return
     data = await state.get_data()
-    photos = list(data.get("fo_photos") or [])
-    unique_ids = {item.get("file_unique_id") for item in photos}
-    if file_unique_id not in unique_ids:
-        item: dict[str, object] = {
-            "file_id": file_id,
-            "file_unique_id": file_unique_id,
-            "filename": filename,
-        }
-        if file_size is not None:
-            item["file_size"] = file_size
-        photos.append(item)
-        await state.update_data(fo_photos=photos)
-    return len(photos)
+    total = len(list(data.get("fo_photos") or []))
+    text = (
+        MSG_FO_PHOTOS_ADDED.format(added=added, count=total)
+        if added > 1
+        else MSG_FO_PHOTO_ADDED.format(count=total)
+    )
+    await answer_text(
+        message,
+        text,
+        reply_markup=fo_photos_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def _accept_fo_media(
+    message: Message,
+    state: FSMContext,
+    item: _FoMediaItem,
+) -> None:
+    chat_id = message.chat.id
+    user_id = _message_user_id(message)
+    added, total = await _append_fo_media_items(
+        state,
+        chat_id=chat_id,
+        user_id=user_id,
+        items=[item],
+    )
+    if added <= 0:
+        return
+
+    group_id = message.media_group_id
+    if not group_id:
+        await answer_text(
+            message,
+            MSG_FO_PHOTO_ADDED.format(count=total),
+            reply_markup=fo_photos_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Альбом: файлы уже в FSM, ответ один на всю пачку.
+    key = (chat_id, user_id, str(group_id))
+    _FO_ALBUM_ADDED[key] = _FO_ALBUM_ADDED.get(key, 0) + added
+    previous = _FO_ALBUM_TASKS.get(key)
+    if previous is not None and not previous.done():
+        previous.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await previous
+    _FO_ALBUM_TASKS[key] = asyncio.create_task(
+        _reply_fo_album(key=key, message=message, state=state)
+    )
 
 
 def _normalize_tag_text(text: str) -> str:
@@ -444,20 +556,15 @@ async def handle_fo_photo(
     state: FSMContext,
 ) -> None:
     photo = message.photo[-1]
-    data = await state.get_data()
-    index = len(data.get("fo_photos") or []) + 1
-    count = await _append_fo_media(
-        state,
-        file_id=photo.file_id,
-        file_unique_id=photo.file_unique_id,
-        filename=f"photo_{index}.jpg",
-        file_size=photo.file_size,
-    )
-    await answer_text(
+    await _accept_fo_media(
         message,
-        MSG_FO_PHOTO_ADDED.format(count=count),
-        reply_markup=fo_photos_keyboard(),
-        parse_mode=ParseMode.HTML,
+        state,
+        _FoMediaItem(
+            file_id=photo.file_id,
+            file_unique_id=photo.file_unique_id,
+            filename="photo_{index}.jpg",
+            file_size=photo.file_size,
+        ),
     )
 
 
@@ -469,24 +576,22 @@ async def handle_fo_video(
     video = message.video
     if video is None:
         return
-    data = await state.get_data()
-    index = len(data.get("fo_photos") or []) + 1
-    count = await _append_fo_media(
-        state,
-        file_id=video.file_id,
-        file_unique_id=video.file_unique_id,
-        filename=_video_filename(
-            index=index,
-            file_name=video.file_name,
-            mime_type=video.mime_type,
-        ),
-        file_size=video.file_size,
+    filename = _video_filename(
+        index=0,
+        file_name=video.file_name,
+        mime_type=video.mime_type,
     )
-    await answer_text(
+    if not (video.file_name and video.file_name.strip()):
+        filename = "video_{index}" + _VIDEO_EXT.get((video.mime_type or "").casefold(), ".mp4")
+    await _accept_fo_media(
         message,
-        MSG_FO_PHOTO_ADDED.format(count=count),
-        reply_markup=fo_photos_keyboard(),
-        parse_mode=ParseMode.HTML,
+        state,
+        _FoMediaItem(
+            file_id=video.file_id,
+            file_unique_id=video.file_unique_id,
+            filename=filename,
+            file_size=video.file_size,
+        ),
     )
 
 
@@ -498,20 +603,15 @@ async def handle_fo_video_note(
     note = message.video_note
     if note is None:
         return
-    data = await state.get_data()
-    index = len(data.get("fo_photos") or []) + 1
-    count = await _append_fo_media(
-        state,
-        file_id=note.file_id,
-        file_unique_id=note.file_unique_id,
-        filename=f"video_note_{index}.mp4",
-        file_size=note.file_size,
-    )
-    await answer_text(
+    await _accept_fo_media(
         message,
-        MSG_FO_PHOTO_ADDED.format(count=count),
-        reply_markup=fo_photos_keyboard(),
-        parse_mode=ParseMode.HTML,
+        state,
+        _FoMediaItem(
+            file_id=note.file_id,
+            file_unique_id=note.file_unique_id,
+            filename="video_note_{index}.mp4",
+            file_size=note.file_size,
+        ),
     )
 
 
@@ -532,35 +632,29 @@ async def handle_fo_document_image(
             parse_mode=ParseMode.HTML,
         )
         return
-    data = await state.get_data()
-    index = len(data.get("fo_photos") or []) + 1
     if mime.startswith("video/"):
-        filename = _video_filename(
-            index=index,
-            file_name=document.file_name,
-            mime_type=document.mime_type,
-        )
+        if document.file_name and document.file_name.strip():
+            filename = document.file_name.strip()
+        else:
+            filename = "video_{index}" + _VIDEO_EXT.get(mime, ".mp4")
+    elif document.file_name and document.file_name.strip():
+        filename = document.file_name.strip()
     else:
         ext = ".jpg"
-        if document.file_name and "." in document.file_name:
-            ext = "." + document.file_name.rsplit(".", 1)[-1]
-        elif "png" in mime:
+        if "png" in mime:
             ext = ".png"
         elif "webp" in mime:
             ext = ".webp"
-        filename = document.file_name or f"photo_{index}{ext}"
-    count = await _append_fo_media(
-        state,
-        file_id=document.file_id,
-        file_unique_id=document.file_unique_id,
-        filename=filename,
-        file_size=document.file_size,
-    )
-    await answer_text(
+        filename = f"photo_{{index}}{ext}"
+    await _accept_fo_media(
         message,
-        MSG_FO_PHOTO_ADDED.format(count=count),
-        reply_markup=fo_photos_keyboard(),
-        parse_mode=ParseMode.HTML,
+        state,
+        _FoMediaItem(
+            file_id=document.file_id,
+            file_unique_id=document.file_unique_id,
+            filename=filename,
+            file_size=document.file_size,
+        ),
     )
 
 
